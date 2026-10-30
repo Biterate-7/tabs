@@ -8,6 +8,8 @@ Hubble is one connected workspace for everything you learn and create with AI. C
 
 **Removed:** the AI agent Command Centre (agent sessions, approvals and runtimes). Records it left on a device are kept until the person exports or deletes them in Settings → Data.
 
+**Context intelligence.** With the person's opt-in, Hubble for Chrome notices the pages, documents and AI chats they use (addresses and titles; for AI apps they allow, topic words — never the text), and Hubble suggests on this device which project they belong to, or a new one, and offers to pick a project up again. Nothing is sent to an AI service; every suggestion is reviewed, editable and undoable. See [docs/context-intelligence.md](docs/context-intelligence.md).
+
 This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
 
 ## Getting Started

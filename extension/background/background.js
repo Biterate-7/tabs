@@ -46,13 +46,16 @@ import { createCaptureQueue, publicJob } from "../src/capture-queue.js";
 import { PROJECT_EVENTS, applyProjectsReport, readProjectsReport, readProjectsSnapshot } from "../src/projects-sync.js";
 import { pageFingerprint } from "../src/tab-matching.js";
 import { aiProviderOf, checkPageRead, conversationIdentityOf, insertIntoComposer, readConversationFromPage } from "../src/ai-pages.js";
-import { createTransferRunner, readTransferRequest, MSG_AI_PERMISSION_ANSWER, MSG_AI_TRANSFER, MSG_AI_TRANSFER_PROGRESS, TRANSFER_TIMING } from "../src/ai-transfer.js";
+import { createTransferRunner, readTransferRequest, MSG_AI_PERMISSION_ANSWER, MSG_AI_TRANSFER, MSG_AI_TRANSFER_PROGRESS, TRANSFER_PROVIDERS, TRANSFER_TIMING } from "../src/ai-transfer.js";
 import { hubbleTransferStep } from "../src/ai-transfer-page.js";
 import { DESKTOP_LAUNCH_URL, findDesktop } from "../src/desktop.js";
 import { createDesktopAdd, createDesktopSave } from "../src/desktop-add.js";
 import { buildImportPayload } from "../src/tabs.js";
 import { buildSessionCapture } from "../src/sessions.js";
-import { validateBrowserCommand } from "../src/browser-commands.js";
+import { CONTEXT_ACTIONS, validateBrowserCommand } from "../src/browser-commands.js";
+import { createActivityCollector, isPaused, readContextSettings } from "../src/context-activity.js";
+import { activityKeyOf, isDetectable } from "../src/context-sites.js";
+import { createIdentityVerifier } from "../src/context-identity.js";
 import { BROWSER_ACTION_HANDLERS } from "../src/browser-actions.js";
 import {
   readStoredTarget,
@@ -795,13 +798,25 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
  * back, the web page) is never trusted just because the message arrived
  * through the expected channel — see AGENTS.md section 14.
  */
-async function handleBrowserCommand({ id, action, args }, senderTabId) {
+async function handleBrowserCommand({ id, action, args }, sender) {
+  const senderTabId = sender?.tab?.id;
   const validated = validateBrowserCommand(action, args);
   if (!validated.ok) {
     return { id, ok: false, error: validated.error };
   }
+  // Context detection answers only Hubble's own page (top frame, Hubble's origin) — never a frame or another site.
+  // Nor a Hubble tab in a private window: what Chrome keeps for context is the ordinary profile's, never the private one's.
+  if (CONTEXT_ACTIONS.includes(action) && (!fromHubblePage(sender) || sender?.tab?.incognito === true)) {
+    return { id, ok: false, error: "Only Hubble can ask for this." };
+  }
+  // Which account it is for is Hubble's server's answer, not the page's (context-identity.js). Writes check afresh.
+  if (CONTEXT_ACTIONS.includes(action)) {
+    const identity = await contextIdentity.verify(validated.args.account, { fresh: !CONTEXT_READS.has(action) });
+    if (!identity.ok) return { id, ok: false, error: identity.error };
+    validated.args = { ...validated.args, owner: identity.owner };
+  }
 
-  const handler = BROWSER_ACTION_HANDLERS[action];
+  const handler = CONTEXT_HANDLERS[action] ?? BROWSER_ACTION_HANDLERS[action];
   if (!handler) {
     // Unreachable in practice (validateBrowserCommand's allowlist and this
     // handler map are drawn from the same action names), but a defensive
@@ -832,7 +847,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return undefined;
   }
 
-  handleBrowserCommand(payload, sender.tab?.id)
+  handleBrowserCommand(payload, sender)
     .then((response) => safeSendResponse(sendResponse, response))
     .catch(() => safeSendResponse(sendResponse, { id: payload.id, ok: false, error: "Unexpected error running browser command." }));
 
@@ -1499,7 +1514,7 @@ async function captureConversation({ tabId, workspaceId, expectedKey }) {
   }
 }
 
-async function captureIdentified(tabId, tab, identity, workspaceId) {
+async function captureIdentified(tabId, tab, identity, workspaceId, { viaDesktop = true, owner } = {}) {
   let read;
   try {
     const [injection] = await chrome.scripting.executeScript({ target: { tabId }, func: readConversationFromPage });
@@ -1525,19 +1540,22 @@ async function captureIdentified(tabId, tab, identity, workspaceId) {
   // The address Chrome reports wins over the page's own: it is what the person is looking at.
   const capture = { url: tab.url, title: checked.title || tab.title || "", turns: checked.turns };
 
-  saveShown.delete(tabId);
-  const viaDesktop = await desktopSave(
-    { ...capture, provider: identity.provider, key: identity.key, truncated: read?.truncated === true },
-    { show: (toast) => showSaveToast(tabId, toast) }
-  );
-  if (!viaDesktop.fallback) {
-    return withReadNotes(answerFromDesktop(viaDesktop), checked);
+  // A save Hubble on the web asked for (context suggestions) stays with Hubble on the web.
+  if (viaDesktop) {
+    saveShown.delete(tabId);
+    const sentToDesktop = await desktopSave(
+      { ...capture, provider: identity.provider, key: identity.key, truncated: read?.truncated === true },
+      { show: (toast) => showSaveToast(tabId, toast) }
+    );
+    if (!sentToDesktop.fallback) {
+      return withReadNotes(answerFromDesktop(sentToDesktop), checked);
+    }
   }
   // Hubble Desktop isn't open: Hubble on the web, into the project chosen in the popup — as a job that is written
   // down before it is delivered, so a closed popup, a stopped worker or a Hubble page that answers late loses nothing.
   if (!workspaceId) return { ok: false, error: "no-project" };
   const notes = { ...(checked.olderNotLoaded ? { olderNotLoaded: true } : {}), ...(checked.partial ? { partial: true } : {}) };
-  const job = await captureQueue.submit({ key: identity.key, provider: identity.provider, workspaceId, projectName: await snapshotProjectName(workspaceId), capture, truncated: read?.truncated === true, notes });
+  const job = await captureQueue.submit({ key: identity.key, provider: identity.provider, workspaceId, projectName: await snapshotProjectName(workspaceId), capture, truncated: read?.truncated === true, notes, ...(owner ? { owner } : {}) });
   return answerFromJob(job);
 }
 
@@ -1604,7 +1622,11 @@ function scheduleCaptureRetry(at) {
 
 const captureQueue = createCaptureQueue({
   storage: captureStorage,
-  deliver: (job, { openIfMissing }) => askHubblePage("capture", { workspaceId: job.workspaceId, captureId: job.id, capture: job.capture }, { openIfMissing }),
+  deliver: async (job, { openIfMissing }) => {
+    // A context save is delivered only while the browser is still signed in as the account that asked for it.
+    if (job.owner && (await contextIdentity.currentOwner()) !== job.owner) return { ok: false, error: "identity-changed" };
+    return askHubblePage("capture", { workspaceId: job.workspaceId, captureId: job.id, capture: job.capture }, { openIfMissing });
+  },
   schedule: scheduleCaptureRetry,
   isProjectKnown: async (workspaceId) => Boolean((await projectsSnapshot())?.projects.some((project) => project.id === workspaceId)),
   newId: newRequestId,
@@ -1786,11 +1808,11 @@ function permissionContains(origins) {
 }
 
 /** Opens the permission window and resolves with the person's answer: "granted", "denied" or "timeout". */
-async function requestProviderPermission(provider, origins, opId) {
+async function requestProviderPermission(provider, origins, opId, purpose = "transfer") {
   let windowId;
   try {
     const created = await chrome.windows.create({
-      url: chrome.runtime.getURL(`permissions/grant.html?provider=${encodeURIComponent(provider)}&op=${encodeURIComponent(opId)}`),
+      url: chrome.runtime.getURL(`permissions/grant.html?provider=${encodeURIComponent(provider)}&op=${encodeURIComponent(opId)}${purpose === "context" ? "&purpose=context" : ""}`),
       type: "popup",
       width: 480,
       height: 440,
@@ -1906,3 +1928,286 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     .catch(() => safeSendResponse(sendResponse, { opId: read.request.opId, ok: false, error: "failed" }));
   return true;
 });
+
+
+// ---------------------------------------------------------------------------
+// Context detection (src/context-activity.js): what Chrome shows the person,
+// kept so Hubble can suggest which project it belongs to and help them pick
+// work up again. Off until they choose in Hubble; every event below is
+// checked against that choice before anything is kept.
+//
+//   tab events ──► collector (chrome.storage.local) ──► HUBBLE_CONTEXT_CHANGED nudge
+//   Hubble page ──► get_context_activity / settings / forget / clear (browser commands, Hubble's page only)
+//
+// Nothing here logs a title, an address or what a page says.
+// ---------------------------------------------------------------------------
+
+/** The AI apps whose optional host permission Chrome has granted right now. */
+async function grantedContextProviders() {
+  const granted = [];
+  for (const [provider, config] of Object.entries(TRANSFER_PROVIDERS)) {
+    if (await permissionContains(config.origins)) granted.push(provider);
+  }
+  return granted;
+}
+
+let contextNudgeTimer;
+/** Tells open Hubble pages that activity changed — at most every few seconds, carrying nothing. */
+function nudgeHubblePages() {
+  if (contextNudgeTimer) return;
+  contextNudgeTimer = setTimeout(async () => {
+    contextNudgeTimer = undefined;
+    let tabs = [];
+    try {
+      tabs = await chrome.tabs.query({ url: `${TABDUMP_ORIGIN}/*` });
+    } catch {
+      tabs = [];
+    }
+    for (const tab of tabs) {
+      if (Number.isInteger(tab.id) && !tab.discarded) chrome.tabs.sendMessage(tab.id, { type: "HUBBLE_CONTEXT_CHANGED" }).catch(() => {});
+    }
+  }, 3000);
+}
+
+const contextActivity = createActivityCollector({
+  storage: {
+    get: async (key) => (await chrome.storage.local.get(key))?.[key],
+    set: (key, value) => chrome.storage.local.set({ [key]: value }),
+  },
+  sessionStorage: chrome.storage?.session
+    ? {
+        get: async (key) => (await chrome.storage.session.get(key))?.[key],
+        set: (key, value) => chrome.storage.session.set({ [key]: value }),
+      }
+    : undefined,
+  now: () => Date.now(),
+  newEpoch: newRequestId,
+  hubbleOrigin: TABDUMP_ORIGIN,
+  hasHostPermission: (provider) => (TRANSFER_PROVIDERS[provider] ? permissionContains(TRANSFER_PROVIDERS[provider].origins) : Promise.resolve(false)),
+  readConversation: async (tabId) => {
+    const [injection] = await chrome.scripting.executeScript({ target: { tabId }, func: readConversationFromPage });
+    return injection?.result;
+  },
+  getTab: (tabId) => chrome.tabs.get(tabId).catch(() => undefined),
+  schedule: (fn, ms) => {
+    const timer = setTimeout(fn, ms);
+    return () => clearTimeout(timer);
+  },
+  notify: nudgeHubblePages,
+  log,
+});
+
+// A conversation is read a few seconds after it settles, so a reply still streaming in is not half-read.
+const CONTEXT_READ_DELAY_MS = 4000;
+const contextReadTimers = new Map();
+function scheduleContextRead(tab) {
+  if (!Number.isInteger(tab?.id) || !conversationIdentityOf(tab.url ?? "")) return;
+  clearTimeout(contextReadTimers.get(tab.id));
+  contextReadTimers.set(
+    tab.id,
+    setTimeout(() => {
+      contextReadTimers.delete(tab.id);
+      void chrome.tabs
+        .get(tab.id)
+        .then((latest) => latest && contextActivity.maybeReadConversation(latest))
+        .catch(() => {});
+    }, CONTEXT_READ_DELAY_MS)
+  );
+}
+
+// Registered at module scope, as MV3 requires for events that wake a stopped worker.
+chrome.tabs.onUpdated?.addListener((tabId, changeInfo, tab) => {
+  if (tab?.incognito || changeInfo?.discarded) return;
+  if (changeInfo?.status === "complete") {
+    // A page that loads in the tab in front is where the person is now (they followed a link or typed an address).
+    void contextActivity.observe(tab, { inFront: tab?.active === true }).then((record) => record && scheduleContextRead(tab));
+  } else if (typeof changeInfo?.title === "string") {
+    contextActivity.observeTitleChange(tabId);
+  }
+});
+
+chrome.tabs.onActivated?.addListener(({ tabId }) => {
+  void chrome.tabs
+    .get(tabId)
+    .then((tab) => contextActivity.observe(tab, { activated: true }).then((record) => record && scheduleContextRead(tab)))
+    .catch(() => {});
+});
+
+chrome.windows?.onFocusChanged?.addListener((windowId) => {
+  // Chrome lost focus: the visit to the tab in front ends here.
+  if (windowId === chrome.windows.WINDOW_ID_NONE) {
+    void contextActivity.observe(null, { activated: true });
+    return;
+  }
+  void chrome.tabs
+    .query({ active: true, windowId })
+    .then(([tab]) => tab && contextActivity.observe(tab, { activated: true }))
+    .catch(() => {});
+});
+
+chrome.permissions?.onRemoved?.addListener(() => {
+  void grantedContextProviders().then((granted) => contextActivity.permissionsChanged(granted));
+});
+
+/** Each open, ordinary, detectable tab: its activity key (for this store) and its address (the page keys it its own way). */
+async function openContextKeys(settings) {
+  let tabs = [];
+  try {
+    tabs = await chrome.tabs.query({});
+  } catch {
+    return { keys: new Set(), urls: [] };
+  }
+  const keys = new Set();
+  const urls = [];
+  for (const tab of tabs) {
+    if (tab.incognito || typeof tab.url !== "string") continue;
+    if (!isDetectable(tab.url, { ...settings, paused: false }, { hubbleOrigin: TABDUMP_ORIGIN })) continue;
+    const key = activityKeyOf(tab.url);
+    if (key) keys.add(key);
+    if (urls.length < 500) urls.push(tab.url);
+  }
+  return { keys, urls };
+}
+
+async function contextSettingsAnswer() {
+  const settings = await contextActivity.settings();
+  let incognitoAllowed = false;
+  try {
+    incognitoAllowed = (await chrome.extension?.isAllowedIncognitoAccess?.()) === true;
+  } catch {
+    incognitoAllowed = false;
+  }
+  return { settings, granted: await grantedContextProviders(), incognitoAllowed, version: chrome.runtime.getManifest?.().version ?? "" };
+}
+
+/** Context commands that only read; the rest change something and always verify the account afresh. */
+const CONTEXT_READS = new Set(["get_context_settings", "get_context_activity"]);
+
+const contextIdentity = createIdentityVerifier({
+  fetch: (...args) => globalThis.fetch(...args),
+  hubbleOrigin: TABDUMP_ORIGIN,
+  now: () => Date.now(),
+  subtle: globalThis.crypto?.subtle,
+});
+
+/** Every open tab, once — the one in front last, so it holds the focus. */
+async function observeOpenTabs() {
+  let tabs = [];
+  try {
+    tabs = await chrome.tabs.query({});
+  } catch {
+    return;
+  }
+  for (const tab of tabs) if (!tab.active) await contextActivity.observe(tab);
+  for (const tab of tabs) if (tab.active) await contextActivity.observe(tab, { inFront: true });
+}
+
+/**
+ * Context ownership. Activity and consent live in this Chrome profile, which
+ * several Hubble accounts may use (a shared family or school computer). Every
+ * command carries the asking account's random context id (validated in
+ * browser-commands.js); only the account that opted in is answered. Another
+ * account sees detection as not set up and receives nothing kept; when it
+ * opts in itself, what was kept for the previous one is cleared first.
+ */
+/** Settings as an account is shown them: never which account owns them. */
+function withoutOwner(settings) {
+  const shown = { ...settings };
+  delete shown.owner;
+  return shown;
+}
+
+function ownsActivity(settings, owner) {
+  return typeof settings.owner === "string" && settings.owner === owner;
+}
+
+async function contextSettingsFor(owner) {
+  const answer = await contextSettingsAnswer();
+  if (!answer.settings.owner || answer.settings.owner === owner) return { ...answer, settings: withoutOwner(answer.settings) };
+  // Someone else's choice: this account hasn't chosen, and isn't told what the other chose.
+  return { ...answer, settings: withoutOwner(readContextSettings(undefined)), otherAccount: true };
+}
+
+/** Context detection's commands, after validateBrowserCommand and the Hubble-page check in handleBrowserCommand. */
+const CONTEXT_HANDLERS = {
+  get_context_settings: ({ owner }) => contextSettingsFor(owner),
+
+  set_context_settings: async ({ settings, owner }) => {
+    const before = await contextActivity.settings();
+    const patch = withoutOwner(settings);
+    // A different identity choosing — or a choice whose owner isn't a confirmed one (an older build's): what was kept
+    // goes before anything is kept for this one. Only a first choice ever (nothing decided, nothing collected) skips it.
+    const transfer = before.owner !== owner && (before.owner !== undefined || before.decidedAt !== undefined);
+    if (transfer) await contextActivity.clear();
+    const after = transfer
+      ? await contextActivity.updateSettings(readContextSettings({ ...patch, owner }), { replace: true })
+      : await contextActivity.updateSettings(readContextSettings({ ...before, ...patch, owner }));
+    // Just turned on (or resumed, or a new account): the tabs already open are what the person is working on now.
+    const detecting = (value) => value.mode !== "off" && !isPaused(value, Date.now());
+    if (detecting(after) && (transfer || !detecting(before))) await observeOpenTabs();
+    return contextSettingsFor(owner);
+  },
+
+  /** Opens the permission window for one AI app; resolves with what Chrome actually granted. */
+  request_context_access: async ({ provider }) => {
+    const config = TRANSFER_PROVIDERS[provider];
+    if (await permissionContains(config.origins)) return { provider, granted: true };
+    const answer = await requestProviderPermission(provider, config.origins, newRequestId(), "context");
+    const granted = answer === "granted";
+    if (granted) void contextActivity.permissionsChanged(await grantedContextProviders());
+    return { provider, granted, answer };
+  },
+
+  get_context_activity: async ({ since, epoch, owner }) => {
+    const settings = await contextActivity.settings();
+    // Not this account's activity (or nobody's yet): nothing at all, not even what is open now.
+    if (!ownsActivity(settings, owner)) {
+      const empty = await contextActivity.list({ since: 0, epoch: "" });
+      return { epoch: empty.epoch, seq: 0, reset: true, records: [], removed: [], openUrls: [] };
+    }
+    // Off or paused: what is open now is not noticed either.
+    const noticing = settings.mode !== "off" && !isPaused(settings, Date.now());
+    const [changes, open] = await Promise.all([contextActivity.list({ since, epoch }), noticing ? openContextKeys(settings) : { keys: new Set(), urls: [] }]);
+    return { ...changes, records: changes.records.map((record) => ({ ...record, open: open.keys.has(record.key) })), openUrls: open.urls };
+  },
+
+  forget_context_activity: async ({ keys, owner }) => (ownsActivity(await contextActivity.settings(), owner) ? contextActivity.forget(keys) : { forgotten: 0 }),
+
+  // Clearing is allowed only to the account it belongs to; another account has nothing here to clear.
+  clear_context_activity: async ({ owner }) => (ownsActivity(await contextActivity.settings(), owner) ? contextActivity.clear() : { epoch: "not-yours" }),
+
+  /**
+   * Saves the open conversation at `url` into `workspaceId` through the same
+   * job Save to Hubble uses (read the page → capture queue → the Hubble page
+   * saves it). Only with Chrome's permission for that AI app: this runs from
+   * a click in Hubble, not in the AI app's tab, so activeTab doesn't apply.
+   */
+  capture_context_conversation: async ({ url, workspaceId, owner }) => {
+    const current = await contextActivity.settings();
+    if (!ownsActivity(current, owner)) return { ok: false, error: "not-yours" };
+    // Never a page the person excluded, or a sensitive one, whatever a suggestion still says.
+    if (!isDetectable(url, { ...current, mode: "auto", paused: false }, { hubbleOrigin: TABDUMP_ORIGIN })) return { ok: false, error: "excluded" };
+    const identity = conversationIdentityOf(url);
+    if (!identity) return { ok: false, error: "not-a-conversation" };
+    const config = TRANSFER_PROVIDERS[identity.provider];
+    if (!config || !(await permissionContains(config.origins))) return { ok: false, error: "no-permission" };
+    let tabs = [];
+    try {
+      tabs = await chrome.tabs.query({});
+    } catch {
+      tabs = [];
+    }
+    const tab = tabs.find((entry) => !entry.incognito && typeof entry.url === "string" && conversationIdentityOf(entry.url)?.key === identity.key);
+    if (!tab) return { ok: false, error: "not-open" };
+    if (capturesInFlight.has(identity.key)) return { ok: false, error: "already-saving" };
+    capturesInFlight.add(identity.key);
+    try {
+      // The job is bound to this owner: if the browser is signed in as someone else by the time it is delivered, it is
+      // dropped with its text instead of being handed to the next account's Hubble page.
+      return await captureIdentified(tab.id, tab, identity, workspaceId, { viaDesktop: false, owner });
+    } finally {
+      capturesInFlight.delete(identity.key);
+    }
+  },
+};
+

@@ -113,6 +113,7 @@ export function WorkspaceView({
   recentlyAddedIds,
   onOpenSidebar,
   organizeOffer,
+  contextStrip,
   onDismissOrganizeOffer,
   onCreateSection,
   onRenameSection,
@@ -165,6 +166,8 @@ export function WorkspaceView({
   /** A bulk import just landed here: offer Smart Organize once (see components/organize/subject-organize.tsx). A token per import, so the next one offers afresh. */
   organizeOffer?: number
   onDismissOrganizeOffer?: () => void
+  /** Context intelligence: pages Hubble noticed that may belong in this project (components/intelligence). */
+  contextStrip?: React.ReactNode
   /**
    * Section CRUD + manual tab assignment — all omitted in standalone/test
    * contexts that don't wire up section persistence, in which case the
@@ -1123,6 +1126,7 @@ export function WorkspaceView({
       >
         {projectHome}
         {organizationStatus}
+        {contextStrip}
         {organizeOffer !== undefined && currentWorkspace && (
           <SubjectOrganizeOffer
             key={organizeOffer}

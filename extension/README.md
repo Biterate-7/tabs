@@ -240,3 +240,19 @@ The toolbar/store icons in `icons/` (16/32/48/128px) are generated from the
 Hubble logo at `brand/hubble-logo-source.webp` — the same source as the web
 app's favicon and the desktop app icon. Run `npm run brand:assets` from the
 repository root to regenerate them (see `brand/README.md`).
+
+## Context detection: noticing work, suggesting where it belongs
+
+Off until the person chooses in Hubble (Home's invitation or Settings →
+Context). `src/context-activity.js` records, per page, only what `tabs`
+already shows — address, title, icon, when — from `tabs.onUpdated`,
+`tabs.onActivated` and `windows.onFocusChanged`, registered at module scope.
+`src/context-sites.js` decides what may be noticed: sensitive sites
+(mail, messaging, banking, health, sign-in pages), private windows, Hubble and
+local addresses never are. For an AI app the person allows, the conversation
+in an open tab is read with the existing reader and only topic words, a count
+and a hash are kept; that needs the app's optional host permission, asked for
+in `permissions/grant.html?purpose=context`. The Hubble page pulls changes
+with the `*_context_*` browser commands, which background.js answers only
+for Hubble's own top frame. **No new permissions.** See
+[docs/context-intelligence.md](../docs/context-intelligence.md).

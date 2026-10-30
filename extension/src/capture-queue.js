@@ -213,6 +213,8 @@ export function createCaptureQueue(deps) {
         next = { ...current, status: "queued", error: outcome.error, nextAttemptAt: at + CAPTURE_RETRY_DELAYS_MS[current.attempts - 1], updatedAt: at };
       } else {
         next = { ...current, status: "failed", error: outcome.error ?? "failed", updatedAt: at };
+        // Asked for by an account the browser is no longer signed in as: its text goes now, never to be retried for another.
+        if (outcome.error === "identity-changed") delete next.capture;
       }
       delete next.leaseUntil;
       const updated = list.map((entry) => (entry.id === id ? next : entry));
@@ -230,7 +232,7 @@ export function createCaptureQueue(deps) {
      * tab has it — the person just asked). Resolves with the job afterwards,
      * or `{ error }` when it could not be queued at all.
      */
-    async submit({ key, provider, workspaceId, projectName, capture, truncated = false, notes }) {
+    async submit({ key, provider, workspaceId, projectName, capture, truncated = false, notes, owner }) {
       const queued = await locked(async () => {
         const list = await load();
         const at = now();
@@ -249,6 +251,8 @@ export function createCaptureQueue(deps) {
           capture,
           truncated: truncated === true,
           ...(notes && Object.keys(notes).length > 0 ? { notes } : {}),
+          // A context save's verified owner (context-identity.js): delivered only while that account is signed in.
+          ...(typeof owner === "string" && owner ? { owner } : {}),
           status: "queued",
           attempts: 0,
           createdAt: at,

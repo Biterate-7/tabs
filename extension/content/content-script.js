@@ -28,6 +28,8 @@ const MSG_AI_TRANSFER_RESULT = "HUBBLE_AI_TRANSFER_RESULT";
 const MSG_AI_TRANSFER_HELLO = "HUBBLE_AI_TRANSFER_HELLO";
 const MSG_AI_TRANSFER_HELLO_RESULT = "HUBBLE_AI_TRANSFER_HELLO_RESULT";
 const AI_TRANSFER_PROTOCOL = 1;
+// Context detection: the extension noticed new activity; the page pulls it (get_context_activity).
+const MSG_CONTEXT_CHANGED = "HUBBLE_CONTEXT_CHANGED";
 // Mirrors config.js PAGE_REQUEST_TIMEOUT_MS.
 const PAGE_REQUEST_TIMEOUT_MS = 15000;
 
@@ -452,6 +454,14 @@ onExtensionMessage((message) => {
   const { opId, state } = message.payload ?? {};
   if (typeof opId !== "string" || typeof state !== "string") return undefined;
   window.postMessage({ source: MESSAGE_SOURCE, type: MSG_AI_TRANSFER_PROGRESS, payload: { opId, state } }, window.location.origin);
+  return undefined;
+});
+
+// Context detection: a nudge only — it carries nothing, and the page asks for what changed through the
+// validated get_context_activity command.
+onExtensionMessage((message) => {
+  if (message?.type !== MSG_CONTEXT_CHANGED) return undefined;
+  window.postMessage({ source: MESSAGE_SOURCE, type: MSG_CONTEXT_CHANGED, payload: {} }, window.location.origin);
   return undefined;
 });
 

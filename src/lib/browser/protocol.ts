@@ -82,7 +82,19 @@ export type BrowserActionName =
   | "move_tabs_to_window"
   | "create_browser_window"
   /** Hubble Desktop's relay page handing Chrome's answer to the app (src/components/desktop-relay). Hubble for Chrome 0.9+. */
-  | "deliver_to_desktop";
+  | "deliver_to_desktop"
+  /**
+   * Context detection (src/lib/intelligence/bridge.ts). The extension answers
+   * these only for Hubble's own page. Hubble for Chrome 0.10+; an older one
+   * answers "Unknown or disallowed browser action", which reads as "update".
+   */
+  | "get_context_settings"
+  | "set_context_settings"
+  | "request_context_access"
+  | "get_context_activity"
+  | "forget_context_activity"
+  | "clear_context_activity"
+  | "capture_context_conversation";
 
 export type BrowserCommand<Args = unknown> = {
   id: string;

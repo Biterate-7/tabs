@@ -175,3 +175,16 @@ describe("copyAnonymousDataInto", () => {
     }
   });
 });
+
+describe("identity-bound keys (context detection)", () => {
+  it("are never copied into an account on sign-in, and don't count as data to bring across", async () => {
+    const { IDENTITY_BOUND_KEYS, copyAnonymousDataInto: copy, hasAnonymousData: hasData, hasNamespaceData: hasAccountData, namespacedKey: inAccount } = await import("./namespace")
+    window.localStorage.clear()
+    window.localStorage.setItem("tabdump:context:v1", JSON.stringify({ version: 1, records: [] }))
+    expect(hasData()).toBe(false)
+    copy("account-1")
+    for (const key of IDENTITY_BOUND_KEYS) expect(window.localStorage.getItem(inAccount(key, "account-1"))).toBeNull()
+    window.localStorage.setItem(inAccount("tabdump:context:v1", "account-2"), JSON.stringify({ version: 1, records: [] }))
+    expect(hasAccountData("account-2")).toBe(false)
+  })
+})

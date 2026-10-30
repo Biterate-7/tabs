@@ -71,6 +71,20 @@ export const SCOPED_STORAGE_KEYS = [
 ] as const;
 
 /**
+ * Partitioned per account like the keys above (scopedKey namespaces any key),
+ * but bound to the identity that wrote them: never copied into an account on
+ * sign-in, and never counted as "data to bring across". Context detection's
+ * consent and activity belong to whoever opted in — the signed-out identity
+ * and an account must not end up sharing one context owner id (which would
+ * let signed-out Hubble read the account's activity after signing out).
+ */
+export const IDENTITY_BOUND_KEYS = [
+  // Context intelligence (src/lib/intelligence/persistence.ts): pages one
+  // person used in Chrome, their suggestions and their answers to them.
+  "tabdump:context:v1",
+] as const;
+
+/**
  * Keys this app once wrote and no longer does.
  *
  * Listed rather than forgotten so that removing a feature actually removes

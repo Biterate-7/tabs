@@ -14,6 +14,8 @@ import { LaunchConfirmDialog, useSessionLaunch } from "@/components/sessions/use
 import { activityRows, describeProjectEvent } from "@/components/project/project-activity"
 import { ProjectGalaxy } from "./project-galaxy"
 import { ResumeSessionCard } from "@/components/sessions/resume-card"
+import { useHomeContext } from "@/components/intelligence/home-context"
+import type { HomeContextProps } from "@/components/intelligence/home-context"
 import { useIsDesktop } from "@/hooks/use-is-desktop"
 import { useTabSessions } from "@/hooks/use-tab-sessions"
 import { useAllProjectActivity } from "@/hooks/use-all-project-activity"
@@ -70,6 +72,7 @@ export function HomeView({
   onOpenSessions,
   onUseInAi,
   onShowInGraph,
+  context,
 }: {
   /** The person's projects (workspaces), excluding an untouched default. */
   subjects: readonly Workspace[]
@@ -89,6 +92,8 @@ export function HomeView({
   onUseInAi?: (workspaceId: string) => void
   /** Opens the Graph focused on a node. */
   onShowInGraph?: (nodeId: string) => void
+  /** Context intelligence: suggestions, Smart Resume and the first-run choice. Absent in Hubble Desktop. */
+  context?: HomeContextProps
 }) {
   const isDesktop = useIsDesktop()
   const { sessions: allSessions } = useTabSessions()
@@ -104,6 +109,7 @@ export function HomeView({
   const feed = useMemo(() => recentEvents(events, new Set(subjects.map((subject) => subject.id)), 8), [events, subjects])
   const attention = useMemo(() => pulses.flatMap((pulse) => pulse.attention.map((item) => ({ workspace: pulse.workspace, item }))).slice(0, 4), [pulses])
   const orderedSessions = useMemo(() => sortByActivity(sessions).slice(0, 3), [sessions])
+  const intelligence = useHomeContext({ context, subjects, pulses, now, returningFrom: since, launcher, canOpenTabs: Boolean(onOpenSessions), onOpenSubject })
 
   const launchSession = (session: TabSession) =>
     void launcher.launch({ tabs: session.tabs.map((tab) => ({ url: tab.url, ...(tab.pinned ? { pinned: true } : {}) })), sessionIds: [session.id] })
@@ -123,6 +129,8 @@ export function HomeView({
         <main className="mx-auto flex min-h-[80vh] w-full max-w-xl flex-col justify-center px-6 py-12">
           {/* Sessions can come before projects: someone who saved their tabs can pick them up here. */}
           {onOpenSessions && <ResumeSessionCard now={now} onOpenSessions={onOpenSessions} />}
+          {intelligence.top}
+          {intelligence.suggestions}
           <section aria-label="Get started" className="flex flex-col items-start gap-6 animate-enter">
             <div className="relative grid size-20 place-items-center">
               <svg aria-hidden viewBox="0 0 80 80" className="absolute inset-0 size-20 text-foreground">
@@ -144,6 +152,7 @@ export function HomeView({
             <p className="text-meta text-tertiary">No sign-in needed. Everything stays {isDesktop ? "on this computer" : "in this browser"}.</p>
           </section>
         </main>
+        {intelligence.dialogs}
       </div>
     )
   }
@@ -177,6 +186,9 @@ export function HomeView({
           </div>
         </div>
 
+        {/* Context intelligence: the first-run choice and Smart Resume, only when there is something worth saying. */}
+        {intelligence.top}
+
         {/* Universal Search: the same search page the sidebar opens, from the middle of Home. */}
         {onOpenSearch && <HomeSearch onOpen={onOpenSearch} />}
 
@@ -189,6 +201,9 @@ export function HomeView({
           {...(onUseInAi ? { onUseInAi } : {})}
           {...(onShowInGraph ? { onShowInGraph } : {})}
         />
+
+        {/* Smart Save / Smart Organize: a few suggestions, strongest first. */}
+        {intelligence.suggestions}
 
         <div className="mt-8 grid grid-cols-1 gap-x-12 gap-y-8 lg:grid-cols-[minmax(0,1fr)_320px]">
           <div className="flex min-w-0 flex-col gap-8">
@@ -317,6 +332,7 @@ export function HomeView({
         </div>
       </main>
       <LaunchConfirmDialog request={launcher.confirming} onConfirm={() => void launcher.confirm()} onCancel={launcher.cancel} />
+      {intelligence.dialogs}
     </div>
   )
 }

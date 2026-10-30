@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ALLOWED_BROWSER_ACTIONS, MAX_SESSION_TABS, isSafeOpenUrl, validateBrowserCommand } from "./browser-commands.js";
+import { ALLOWED_BROWSER_ACTIONS, CONTEXT_ACTIONS, MAX_SESSION_TABS, isSafeOpenUrl, validateBrowserCommand } from "./browser-commands.js";
 
 describe("isSafeOpenUrl", () => {
   it("allows http and https urls", () => {
@@ -32,9 +32,16 @@ describe("validateBrowserCommand", () => {
     expect(result.error).toMatch(/unknown or disallowed/i);
   });
 
-  it("exposes exactly the spec's read/open/close/pin/window/history actions", () => {
+  it("exposes exactly the spec's read/open/close/pin/window/history actions, and context detection's", () => {
     expect([...ALLOWED_BROWSER_ACTIONS].sort()).toEqual(
       [
+        "get_context_settings",
+        "set_context_settings",
+        "request_context_access",
+        "get_context_activity",
+        "forget_context_activity",
+        "clear_context_activity",
+        "capture_context_conversation",
         "list_browser_tabs",
         "get_active_tab",
         "list_browser_windows",
@@ -51,6 +58,35 @@ describe("validateBrowserCommand", () => {
         "deliver_to_desktop",
       ].sort()
     );
+  });
+
+  describe("context detection's commands", () => {
+    it("are listed apart, so background.js can refuse them to anything but Hubble's page", () => {
+      expect([...CONTEXT_ACTIONS].every((action) => ALLOWED_BROWSER_ACTIONS.includes(action))).toBe(true);
+    });
+
+    const account = "account-0123456789";
+    it("claim the Hubble account they are for (null signed out); background.js verifies the claim with Hubble", () => {
+      expect(validateBrowserCommand("get_context_activity", {}).ok).toBe(false);
+      expect(validateBrowserCommand("get_context_activity", { account: "bad account!" }).ok).toBe(false);
+      expect(validateBrowserCommand("get_context_activity", { account: 7 }).ok).toBe(false);
+      expect(validateBrowserCommand("clear_context_activity", { account })).toEqual({ ok: true, args: { account } });
+      expect(validateBrowserCommand("clear_context_activity", { account: null })).toEqual({ ok: true, args: { account: null } });
+    });
+
+    it("check their arguments", () => {
+      expect(validateBrowserCommand("get_context_activity", { since: 3, epoch: "e1", account })).toEqual({ ok: true, args: { since: 3, epoch: "e1", account } });
+      expect(validateBrowserCommand("get_context_activity", { since: -1, account }).ok).toBe(false);
+      expect(validateBrowserCommand("get_context_activity", { epoch: "", account }).ok).toBe(false);
+      expect(validateBrowserCommand("request_context_access", { provider: "chatgpt", account })).toEqual({ ok: true, args: { provider: "chatgpt", account } });
+      expect(validateBrowserCommand("request_context_access", { provider: "grok", account }).ok).toBe(false);
+      expect(validateBrowserCommand("forget_context_activity", { keys: [], account }).ok).toBe(false);
+      expect(validateBrowserCommand("forget_context_activity", { keys: Array(401).fill("k"), account }).ok).toBe(false);
+      expect(validateBrowserCommand("set_context_settings", { settings: [], account }).ok).toBe(false);
+      expect(validateBrowserCommand("set_context_settings", { settings: { mode: "auto", excludedHosts: Array(5000).fill("example.com") }, account }).ok).toBe(false);
+      expect(validateBrowserCommand("capture_context_conversation", { url: "javascript:alert(1)", workspaceId: "p", account }).ok).toBe(false);
+      expect(validateBrowserCommand("capture_context_conversation", { url: "https://chatgpt.com/c/abcdef12", workspaceId: "", account }).ok).toBe(false);
+    });
   });
 
   describe("deliver_to_desktop (Hubble Desktop's relay)", () => {

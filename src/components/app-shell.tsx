@@ -110,6 +110,14 @@ import { createTimestamp } from "@/lib/timestamps"
 import { buildTabsFromBrowserImport, type BrowserImportEntry } from "@/lib/tabs/browser-import"
 import { applySmartToSubjects, describeApplied, undoSmartToSubjects } from "@/lib/organize/smart/apply"
 import type { SmartProposal } from "@/lib/organize/smart/types"
+import { useContextSync } from "@/hooks/use-context-intelligence"
+import { ProjectContextStrip } from "@/components/intelligence/project-context-strip"
+import { captureConversation } from "@/lib/intelligence/bridge"
+import { acceptSuggestion, undoAcceptance } from "@/lib/intelligence/decisions"
+import { getContextSnapshot, writeContext } from "@/lib/intelligence/persistence"
+import { proposalFromSuggestion, type SuggestionEdits } from "@/lib/intelligence/proposal"
+import { willSaveText } from "@/lib/intelligence/records"
+import type { Suggestion } from "@/lib/intelligence/types"
 import { OpenTabsOrganize } from "@/components/organize/open-tabs-organize"
 import type { Tab } from "@/lib/tabs/types"
 import type { CategoryId } from "@/lib/categories"
@@ -1000,6 +1008,11 @@ export function AppShell() {
   const quickAdd = useExtensionQuickAdd({ workspaces: store?.workspaces, currentWorkspaceId: currentWorkspace?.id })
   // Chrome → Hubble Desktop (handleDesktopImport below): tabs and conversations the extension sent straight to this app.
   const isDesktopShell = useIsDesktop()
+  // Context intelligence (lib/intelligence): pulls detected activity from Hubble for Chrome and keeps the
+  // suggestions current. Web only — Hubble Desktop can't reach the extension.
+  const contextWorkspaces = useMemo(() => (store ? visibleSubjects(store, subjectsStarted) : []), [store, subjectsStarted])
+  useContextSync({ workspaces: contextWorkspaces, enabled: hydrated && store !== null && !isDesktopShell })
+  const browserConnected = useBrowserConnected()
   const desktopImports = useDesktopImport(
     isDesktopShell ? desktopImport() : undefined,
     hydrated && store !== null,
@@ -1748,6 +1761,111 @@ export function AppShell() {
     })
   }
 
+  /*
+    Context intelligence: a confirmed suggestion. Its pages go through the
+    same apply as Smart Organize's open tabs (applySmartToSubjects →
+    ingestResources), against the live store, in one commit; the person's
+    decision is recorded only once that commit is made. A conversation whose
+    tab is open and readable has its text saved by the ordinary Save to
+    Hubble job; any other is saved as a link that says its text is missing.
+    Undo takes back exactly what this added, like Smart Organize's.
+  */
+  async function handleAcceptSuggestion(suggestion: Suggestion, edits: SuggestionEdits): Promise<boolean> {
+    const before = storeRef.current
+    const context = getContextSnapshot()
+    const proposal = proposalFromSuggestion(suggestion, context.records, edits)
+    if (!before || !proposal) {
+      toast.error("Couldn't save these", { description: "The pages are no longer in Hubble's activity. Nothing was changed." })
+      return false
+    }
+    let applied: ReturnType<typeof applySmartToSubjects>
+    try {
+      applied = applySmartToSubjects(before, proposal, { now: createTimestamp(), subjectsStarted, origin: "extension" })
+    } catch {
+      toast.error("Couldn't save these", { description: "Nothing was changed. Try again." })
+      return false
+    }
+    const result = applied.results[0]
+    if (!result?.targetId) {
+      toast.error("Couldn't save these", { description: result?.error === "destination-missing" ? "That project was deleted. Choose another in Review." : "Nothing was changed." })
+      return false
+    }
+    const workspaceId = result.targetId
+    if (applied.changed) persist(applied.store)
+    if (applied.changed && !lastCommitPersistedRef.current) {
+      toast.error("Couldn't save these", { description: "Your browser's storage is full or unavailable." })
+      return false
+    }
+    const decided = writeContext((state) => acceptSuggestion(state, suggestion.id, { recordKeys: edits.recordKeys, workspaceId, now: Date.now() }))
+    const { receipt } = applied
+    if (receipt.createdSubjects.length > 0 || receipt.renamedDefault) {
+      markSubjectsStarted()
+      setSubjectsStarted(true)
+      recordLoopMilestone("project_created")
+      recordProjectEvent({ workspaceId, kind: "project_created" })
+    }
+    if (result.added > 0) {
+      recordProjectEvent({ workspaceId, kind: "sources_added", count: result.added, origin: "extension" })
+      recordLoopMilestone("resource_added")
+    }
+
+    // Conversations: the text comes from the open page, through Save to Hubble's own job.
+    const byKey = new Map(context.records.map((record) => [record.key, record]))
+    const conversations = edits.recordKeys.map((key) => byKey.get(key)).filter((record) => record?.kind === "conversation")
+    let textSaved = 0
+    let textQueued = 0
+    let linkOnly = 0
+    for (const record of conversations) {
+      if (!record || !willSaveText(record)) {
+        linkOnly += 1
+        continue
+      }
+      const answer = await captureConversation(record.url, workspaceId)
+      // "Saved" only on the page's answer that it is on disk; a queued job is said to be on its way, not done.
+      if (answer.ok && answer.value.status === "saved") textSaved += 1
+      else if (answer.ok && answer.value.status === "queued") textQueued += 1
+      else linkOnly += 1
+    }
+
+    const name = result.targetName ?? "the project"
+    const details = [
+      result.alreadyThere > 0 ? `${result.alreadyThere} already there` : "",
+      textSaved > 0 ? `${textSaved === 1 ? "a conversation's" : `${textSaved} conversations'`} text saved` : "",
+      textQueued > 0 ? `${textQueued === 1 ? "a conversation's text is" : `${textQueued} conversations' text is`} still being saved by Hubble for Chrome` : "",
+      linkOnly > 0 ? `${linkOnly === 1 ? "1 conversation" : `${linkOnly} conversations`} saved as a link — open it and use Save to Hubble for the text` : "",
+      decided.ok ? "" : "Hubble couldn't record the decision, so it may suggest these again",
+    ].filter(Boolean)
+    let undone = false
+    toast(result.added > 0 ? `Saved ${result.added} to ${name}` : `Already in ${name}`, {
+      ...(details.length > 0 ? { description: details.join(" · ") } : {}),
+      ...(applied.changed
+        ? {
+            action: {
+              label: "Undo",
+              onClick: () => {
+                const latest = storeRef.current
+                if (undone || !latest) return
+                undone = true
+                const filed = loadCollectionState().collections.flatMap((collection) => collection.tabIds)
+                const reverted = undoSmartToSubjects(latest, receipt, { protect: new Set([...filed, ...suppliedContentRef.current]) })
+                writeContext((state) => undoAcceptance(state, suggestion.id, Date.now()))
+                if (!reverted.changed) {
+                  toast("Nothing left to undo", { description: "Everything it added has been changed or removed since." })
+                  return
+                }
+                persist(reverted.store)
+                for (const entry of reverted.removedTabs) {
+                  resources.forget(entry.workspaceId, entry.tabIds)
+                  recordProjectEvent({ workspaceId: entry.workspaceId, kind: "sources_removed", count: entry.tabIds.length })
+                }
+              },
+            },
+          }
+        : {}),
+    })
+    return true
+  }
+
   if (!hydrated || !store || !currentWorkspace) return null
 
   // Chrome → Hubble Desktop: the project choice for a batch the extension sent (see useDesktopImport above).
@@ -1826,6 +1944,7 @@ export function AppShell() {
         onOpenSessions={openSessions}
         onUseInAi={(workspaceId) => openReuse({ workspaceId })}
         onShowInGraph={showInGraph}
+        {...(!isDesktopShell ? { context: { connected: browserConnected, onAccept: handleAcceptSuggestion, onOpenSettings: () => openSettings("context") } } : {})}
       />
     )
   }
@@ -2155,6 +2274,8 @@ export function AppShell() {
             }}
             canDeleteSubject={store.workspaces.length > 1}
           >
+            {/* Pages Hubble noticed that may belong here: the same stored suggestion Home shows. */}
+            {!isDesktopShell && <ProjectContextStrip workspace={currentWorkspace} projects={subjects} onAccept={handleAcceptSuggestion} />}
             {/* The older "paste every open tab, organize later" dump, one disclosure away. */}
             {projectHomeFor(currentWorkspace, <TabInput onDump={handleDump} />)}
           </ProjectPage>
@@ -2195,6 +2316,7 @@ export function AppShell() {
             recentlyAddedIds={recentlyAddedIds}
             onOpenSidebar={() => setMobileSidebarOpen(true)}
             {...(organizeOfferFor?.workspaceId === currentWorkspace.id ? { organizeOffer: organizeOfferFor.token } : {})}
+            {...(!isDesktopShell ? { contextStrip: <ProjectContextStrip workspace={currentWorkspace} projects={subjects} onAccept={handleAcceptSuggestion} /> } : {})}
             onDismissOrganizeOffer={() => setOrganizeOfferFor(null)}
             onCreateSection={handleCreateSection}
             onRenameSection={handleRenameSection}

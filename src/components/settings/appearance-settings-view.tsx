@@ -22,6 +22,7 @@ import {
   UserRound,
   Boxes,
   Cable,
+  Radar,
 } from "lucide-react"
 import { IconButton } from "@/components/ui/icon-button"
 import { cn } from "@/lib/utils"
@@ -36,6 +37,7 @@ import { AccentSection } from "./sections/accent-section"
 import { AiIntegrationsSection } from "./sections/ai-integrations-section"
 import { AiAppsSection, DataSection } from "./sections/knowledge-sections"
 import { DesktopSection } from "./sections/desktop-section"
+import { ContextSection } from "./sections/context-section"
 import {
   AccountSettingsSection,
   AdvancedSection,
@@ -60,6 +62,8 @@ export type SettingsSection =
   | "ai-apps"
   /** "AI connectors" in the nav: ChatGPT, Claude, Gemini and Grok reading Hubble over MCP (src/lib/integrations). */
   | "ai-integrations"
+  /** Context detection: what Hubble for Chrome notices, suggestions, and what was kept (src/lib/intelligence). */
+  | "context"
   /** Export, and the records left by removed features. */
   | "data"
   | "workspaces"
@@ -87,6 +91,7 @@ const AFTER: NavItem[] = [
   { id: "account", label: "Account", icon: UserRound },
   { id: "ai-apps", label: "AI apps", icon: MessagesSquare },
   { id: "ai-integrations", label: "AI connectors", icon: Cable },
+  { id: "context", label: "Context", icon: Radar },
   { id: "workspaces", label: "Projects", icon: Boxes },
   { id: "data", label: "Data", icon: Database },
   { id: "extension", label: "Chrome extension", icon: Puzzle },
@@ -216,6 +221,7 @@ export function AppearanceSettingsView({
             {active === "account" && <AccountSettingsSection />}
             {active === "ai-apps" && <AiAppsSection />}
             {active === "ai-integrations" && <AiIntegrationsSection />}
+            {active === "context" && <ContextSection />}
             {active === "data" && <DataSection workspaces={workspaceSettings?.workspaces ?? []} />}
             {active === "workspaces" &&
               (workspaceSettings ? (

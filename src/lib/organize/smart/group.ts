@@ -143,6 +143,11 @@ function isGeneric(token: string): boolean {
   return GENERIC_WORDS.has(token) || GENERIC_WORDS.has(stem(token));
 }
 
+/** Whether a word says what kind of page something is rather than what it is about (see GENERIC_WORDS). */
+export function isGenericWord(token: string): boolean {
+  return isGeneric(token.toLowerCase());
+}
+
 export function isTopicPlatform(identity: string): boolean {
   return TOPIC_PLATFORMS.has(identity) || isGenericSiteIdentity(identity);
 }
@@ -210,6 +215,17 @@ function describe(item: SmartItem): Features {
     if (!order.includes(stemmed)) order.push(stemmed);
   }
   return { item, identity, family: siteFamily(identity), ...(siteName ? { siteName } : {}), words: order, spelling, order, segments };
+}
+
+/**
+ * A title's topic words exactly as grouping sees them — stemmed, site names
+ * and generic words removed — with the first spelling of each for display.
+ * Shared with the context engine (lib/intelligence), so a page is described
+ * the same way wherever Hubble compares it.
+ */
+export function titleTopicWords(title: string, domain: string): { words: string[]; spelling: Map<string, string>; family: string; identity: string } {
+  const f = describe({ id: "", url: "", normalizedUrl: "", resourceKey: "", domain, title: title.trim() });
+  return { words: f.words, spelling: f.spelling, family: f.family, identity: f.identity };
 }
 
 const siteToken = (identity: string) => `site:${identity}`;
