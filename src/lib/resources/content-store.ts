@@ -1,3 +1,4 @@
+import { forgetDerived, pruneDerivedExcept } from "@/lib/conversations/intelligence/store";
 import { getStorageNamespace } from "@/lib/storage/namespace";
 import { cleanLanguageTag } from "./transcript";
 import { CONTENT_LIMITS } from "./types";
@@ -263,6 +264,8 @@ export async function getContents(workspaceId: string, tabIds: readonly string[]
 export async function deleteContent(workspaceId: string, tabIds: readonly string[]): Promise<void> {
   if (tabIds.length === 0) return;
   const keys = tabIds.map((tabId) => contentKey(workspaceId, tabId));
+  // What Hubble worked out from the text goes with it (same keys).
+  await forgetDerived(keys).catch(() => undefined);
   if (!contentStorePersistent()) {
     for (const key of keys) {
       memory.delete(key);
@@ -345,6 +348,7 @@ export async function pruneContentExcept(present: ReadonlyMap<string, ReadonlySe
   const prefix = `${owner()}|`;
   const keep = new Set<string>();
   for (const [workspaceId, tabIds] of present) for (const tabId of tabIds) keep.add(contentKey(workspaceId, tabId));
+  await pruneDerivedExcept(owner(), keep).catch(() => 0);
   if (!contentStorePersistent()) {
     let removed = 0;
     for (const records of [memory, memoryFiles] as Map<string, unknown>[]) {

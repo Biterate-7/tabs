@@ -3,9 +3,9 @@
   "version": "0.2.0",
   "private": true,
   "scripts": {
-    "predev": "node scripts/copy-pdfjs-assets.mjs",
+    "predev": "node scripts/copy-pdfjs-assets.mjs && node scripts/copy-ort-assets.mjs && node scripts/build-embedding-worker.mjs",
     "dev": "next dev",
-    "prebuild": "node scripts/build-extension-zip.mjs && node scripts/copy-pdfjs-assets.mjs",
+    "prebuild": "node scripts/build-extension-zip.mjs && node scripts/copy-pdfjs-assets.mjs && node scripts/copy-ort-assets.mjs && node scripts/build-embedding-worker.mjs",
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
@@ -26,6 +26,7 @@
   },
   "dependencies": {
     "@base-ui/react": "^1.7.0",
+    "@huggingface/transformers": "^4.3.2",
     "@modelcontextprotocol/sdk": "1.30.0",
     "@tauri-apps/api": "^2.11.1",
     "class-variance-authority": "^0.7.1",

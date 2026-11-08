@@ -7,7 +7,7 @@ import type { ManualConnection } from "@/lib/graph/types";
 import type { KnowledgeItem } from "@/lib/memory/items";
 import type { TabSession } from "@/lib/sessions/types";
 import type { Workspace } from "@/lib/workspace/types";
-import type { KnowledgeEdge, KnowledgeEdgeKind, KnowledgeGraph, KnowledgeNode } from "./types";
+import type { ConversationLink, KnowledgeEdge, KnowledgeEdgeKind, KnowledgeGraph, KnowledgeNode } from "./types";
 
 export const projectNodeId = (workspaceId: string) => `p:${workspaceId}`;
 export const sessionNodeId = (sessionId: string) => `s:${sessionId}`;
@@ -28,6 +28,8 @@ export type BuildInput = {
   links?: readonly ManualConnection[];
   /** Dependencies the person recorded between saved tabs (by tab id). */
   dependencies?: readonly TabDependency[];
+  /** Conversations Hubble found to be about the same work (lib/conversations/intelligence). */
+  conversationLinks?: readonly ConversationLink[];
 };
 
 /**
@@ -47,13 +49,13 @@ export function graphItemsOf(workspace: Pick<Workspace, "id" | "tabs" | "notes">
  * alone. Deterministic: the same records always give the same nodes, edges
  * and order, so a layout keyed on ids stays put.
  */
-export function buildKnowledgeGraph({ workspaces, sessions = [], links = [], dependencies = [] }: BuildInput): KnowledgeGraph {
+export function buildKnowledgeGraph({ workspaces, sessions = [], links = [], dependencies = [], conversationLinks = [] }: BuildInput): KnowledgeGraph {
   const nodes: KnowledgeNode[] = [];
   const edges: KnowledgeEdge[] = [];
   const edgeIds = new Set<string>();
   const projectIds = new Set(workspaces.map((workspace) => workspace.id));
 
-  function addEdge(a: string, b: string, kind: KnowledgeEdgeKind, extra: Pick<KnowledgeEdge, "dependency"> = {}) {
+  function addEdge(a: string, b: string, kind: KnowledgeEdgeKind, extra: Pick<KnowledgeEdge, "dependency" | "evidence"> = {}) {
     if (a === b) return;
     // Undirected relationships get one id whichever way round they are found.
     const [source, target] = kind === "contains" || kind === "session-project" || kind === "depends-on" ? [a, b] : a < b ? [a, b] : [b, a];
@@ -161,6 +163,14 @@ export function buildKnowledgeGraph({ workspaces, sessions = [], links = [], dep
     const parent = nodeOfTab.get(dependency.parentTabId);
     const child = nodeOfTab.get(dependency.childTabId);
     if (parent && child) addEdge(parent, child, "depends-on", { dependency: { id: dependency.id, ...(dependency.type ? { type: dependency.type } : {}) } });
+  }
+
+  // Inferred: drawn only between conversations both on the graph, once per pair.
+  const nodeIds = new Set(nodes.map((node) => node.id));
+  for (const link of conversationLinks) {
+    const a = itemNodeId(link.a.workspaceId, link.a.key);
+    const b = itemNodeId(link.b.workspaceId, link.b.key);
+    if (nodeIds.has(a) && nodeIds.has(b)) addEdge(a, b, "related", { evidence: { score: link.score, shared: link.shared } });
   }
 
   return { nodes, edges };
