@@ -14,6 +14,7 @@ import {
   Layers,
   Library,
   MessageSquareShare,
+  MessagesSquare,
   NotebookPen,
   Orbit,
   PanelLeftClose,
@@ -46,6 +47,7 @@ export type SidebarView =
   | "workspace"
   | "graph"
   | "ai"
+  | "conversations"
   | "library"
   | "settings"
   | "favorites"
@@ -137,6 +139,7 @@ export function AppSidebar({
   onOpenHome,
   onOpenSessions,
   onOpenAi,
+  onOpenConversations,
   onOpenLibrary,
   onOpenCommandMenu,
   createActions,
@@ -173,6 +176,8 @@ export function AppSidebar({
   onOpenAi?: () => void
   /** Every conversation, file and note across projects. Absent: no Library row. */
   onOpenLibrary?: () => void
+  /** What Hubble understood from saved AI conversations. Absent: no Conversations row. */
+  onOpenConversations?: () => void
   /** The ⌘K command menu. Absent: no button for it. */
   onOpenCommandMenu?: () => void
   createActions?: SidebarCreateActions
@@ -349,6 +354,7 @@ export function AppSidebar({
             {onOpenHome && <SidebarItem label="Home" icon={<House />} current={activeIs("home")} collapsed={railCollapsed} touch={touch} onClick={go(onOpenHome)} />}
             <SidebarItem label="Graph" icon={<Orbit />} current={activeIs("graph")} collapsed={railCollapsed} touch={touch} onClick={go(onOpenGraph)} />
             {onOpenAi && <SidebarItem label="AI" icon={<MessageSquareShare />} current={activeIs("ai")} collapsed={railCollapsed} touch={touch} onClick={go(onOpenAi)} />}
+            {onOpenConversations && <SidebarItem label="Conversations" icon={<MessagesSquare />} current={activeIs("conversations")} collapsed={railCollapsed} touch={touch} onClick={go(onOpenConversations)} />}
             {onOpenLibrary && <SidebarItem label="Library" icon={<Library />} current={activeIs("library")} collapsed={railCollapsed} touch={touch} onClick={go(onOpenLibrary)} />}
             {onOpenSessions && <SidebarItem label="Sessions" icon={<Layers />} current={activeIs("sessions")} collapsed={railCollapsed} touch={touch} onClick={go(onOpenSessions)} />}
           </nav>

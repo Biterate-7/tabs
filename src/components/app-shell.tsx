@@ -11,10 +11,11 @@ import { SearchView } from "@/components/search/search-view"
 import { isPristineDefault, loadSubjectsStarted, markSubjectsStarted, subjectName, visibleSubjects } from "@/lib/product/subjects"
 import { AppSidebar } from "@/components/sidebar/app-sidebar"
 import { AppearanceSettingsView } from "@/components/settings/appearance-settings-view"
-import { KnowledgeGraphView } from "@/components/knowledge-graph/knowledge-graph-view"
 import type { KnowledgeGraphTabActions } from "@/components/knowledge-graph/knowledge-graph-view"
 import { LibraryView } from "@/components/library/library-view"
 import { AiView } from "@/components/ai/ai-view"
+import { ConversationsView } from "@/components/conversations/conversations-view"
+import { ConversationAwareGraph } from "@/components/conversations/conversation-aware-graph"
 import { useBrowserConnected } from "@/hooks/use-tab-sessions"
 import type { AiProviderId } from "@/lib/providers/registry"
 import { FavoritesView } from "@/components/workspace/favorites-view"
@@ -213,7 +214,7 @@ export function AppShell() {
     project's page; "search" searches every project. Everything else is
     reached from the rail, the palette or a link.
   */
-  const [view, setView] = useState<"home" | "search" | "workspace" | "graph" | "ai" | "library" | "settings" | "favorites" | "recents" | "history-dump" | "sessions">("home")
+  const [view, setView] = useState<"home" | "search" | "workspace" | "graph" | "ai" | "conversations" | "library" | "settings" | "favorites" | "recents" | "history-dump" | "sessions">("home")
   /** A node the Graph selects when it opens ("Show in graph"). */
   const [graphFocus, setGraphFocus] = useState<{ nodeId: string; nonce: number } | undefined>(undefined)
   /**
@@ -1980,7 +1981,7 @@ export function AppShell() {
 
   if (view === "graph") {
     return (
-      <KnowledgeGraphView
+      <ConversationAwareGraph
         workspaces={subjects}
         now={now}
         showSessions
@@ -2006,6 +2007,21 @@ export function AppShell() {
         onOpenItem={(workspaceId, ref) => openItem(workspaceId, ref)}
         onUseInAi={(workspaceId, refs) => openReuse({ workspaceId, refs })}
         onOpenUrl={(url) => void openTab(url)}
+        onOpenSidebar={() => setMobileSidebarOpen(true)}
+      />
+    )
+  }
+
+  if (view === "conversations") {
+    return (
+      <ConversationsView
+        workspaces={subjects}
+        now={now}
+        onOpenItem={(workspaceId, ref, turn) => openItem(workspaceId, ref, turn)}
+        onOpenUrl={(url) => void openTab(url)}
+        onRemoveItem={(workspaceId, ref) => (ref.kind === "source" ? handleRemoveSources(workspaceId, [ref.tabId]) : handleRemoveNotes(workspaceId, [ref.noteId]))}
+        onOpenSettings={() => openSettings("conversations")}
+        onSaveFromAi={() => setSaveFromAiOpen(true)}
         onOpenSidebar={() => setMobileSidebarOpen(true)}
       />
     )
@@ -2149,6 +2165,7 @@ export function AppShell() {
           capture: (mode) => openCapture(currentWorkspace.id, mode),
           saveFromAi: () => setSaveFromAiOpen(true),
           goAi: () => setView("ai"),
+          goConversations: () => setView("conversations"),
           goLibrary: () => setView("library"),
           goSessions: () => openSessions(),
           ...(appearance ? { setTheme: (id: "midnight" | "hubble-light") => appearance.setThemeId(id) } : {}),
@@ -2247,6 +2264,7 @@ export function AppShell() {
         onOpenHistoryDump={() => setView("history-dump")}
         onOpenGraph={handleOpenGraph}
         onOpenAi={() => setView("ai")}
+        onOpenConversations={() => setView("conversations")}
         onOpenLibrary={() => setView("library")}
         onOpenCommandMenu={paletteHost.open}
         createActions={{

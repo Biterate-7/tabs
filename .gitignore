@@ -53,3 +53,11 @@ next-env.d.ts
 
 # generated from node_modules/pdfjs-dist on dev/build (see scripts/copy-pdfjs-assets.mjs)
 /public/pdfjs
+
+# benchmark output and the locally cached embedding model (see vitest.perf.config.ts)
+/.bench-cache/
+
+# generated from onnxruntime-web on dev/build (see scripts/copy-ort-assets.mjs)
+/public/ort
+# built from src/lib/conversations/intelligence/embedding.worker.ts on dev/build (see scripts/build-embedding-worker.mjs)
+/public/workers

@@ -42,7 +42,9 @@ describe("the Graph is the spiral galaxy", () => {
       .filter((file) => /from "[^"]*knowledge-graph-canvas"/.test(readFileSync(file, "utf8")))
       .map((file) => relative(SRC, file).replace(/\\/g, "/"))
     expect(importers).toEqual(["components/knowledge-graph/knowledge-graph-view.tsx"])
-    expect(read("components/app-shell.tsx")).toMatch(/<KnowledgeGraphView\b/)
+    // The shell renders it through ConversationAwareGraph, which adds inferred conversation links and nothing else.
+    expect(read("components/app-shell.tsx")).toMatch(/<ConversationAwareGraph\b/)
+    expect(read("components/conversations/conversation-aware-graph.tsx")).toMatch(/return <KnowledgeGraphView \{\.\.\.props\} conversationLinks=\{conversationLinks\} \/>/)
     const canvases = sources(SRC).filter((file) => /graph-canvas\.tsx$/.test(file))
     expect(canvases.map((file) => relative(SRC, file).replace(/\\/g, "/"))).toEqual(["components/knowledge-graph/knowledge-graph-canvas.tsx"])
   })

@@ -1,4 +1,5 @@
 import { armPoint, clusterBound, clusterReach, clusterSlot, hashUnit, subFans } from "./galaxy";
+import { INFERRED_EDGE_KINDS } from "./types";
 import type { FanKind } from "./galaxy";
 import type { KnowledgeGraph, KnowledgeNode, Point } from "./types";
 
@@ -273,7 +274,8 @@ function armOrder(projects: readonly KnowledgeNode[], graph: KnowledgeGraph): [K
   for (const node of graph.nodes) if (node.projectId) projectOf.set(node.id, `p:${node.projectId}`);
   const affinity = new Map<string, number>();
   for (const edge of graph.edges) {
-    if (edge.kind === "contains" || edge.kind === "session-project") continue;
+    // Inferred relationships never move a project: the galaxy stays where the records put it.
+    if (edge.kind === "contains" || edge.kind === "session-project" || INFERRED_EDGE_KINDS.has(edge.kind)) continue;
     const a = projectOf.get(edge.source);
     const b = projectOf.get(edge.target);
     if (!a || !b || a === b) continue;

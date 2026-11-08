@@ -24,6 +24,12 @@ const eslintConfig = defineConfig([
     // dependencies, gitignored like the Node binary beside it.
     "src-tauri/agent-runtime/**",
     "src-tauri/binaries/**",
+    // Generated on dev/build and gitignored: third-party runtime files copied
+    // from node_modules (scripts/copy-pdfjs-assets.mjs, copy-ort-assets.mjs)
+    // and the bundled embedding worker (scripts/build-embedding-worker.mjs).
+    "public/pdfjs/**",
+    "public/ort/**",
+    "public/workers/**",
   ]),
 ]);
 
