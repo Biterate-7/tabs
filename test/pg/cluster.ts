@@ -78,6 +78,29 @@ export async function readSchemaSql(): Promise<{ auth: string; sync: string }> {
 }
 
 /**
+ * Imports `embedded-postgres` without the normal-exit listeners it installs.
+ *
+ * Loading the package registers `async-exit-hook`, which answers `beforeExit`
+ * with `process.exit(0)`. Vitest reports failure by setting `process.exitCode`
+ * and letting the event loop drain, so that listener turned every failed run
+ * into exit 0 for as long as this module was loaded. Its `exit` listener has to
+ * go too: once `beforeExit` no longer runs first, it calls the package's
+ * shutdown without the callback that shutdown requires, and prints a TypeError
+ * on every run. The signal listeners stay, and startCluster covers `exit`.
+ */
+async function importEmbeddedPostgres() {
+  const events = ["beforeExit", "exit"] as const;
+  const existing = events.map((event) => new Set<unknown>(process.listeners(event as "exit")));
+  const { default: EmbeddedPostgres } = await import("embedded-postgres");
+  events.forEach((event, index) => {
+    for (const listener of process.listeners(event as "exit")) {
+      if (!existing[index].has(listener)) process.removeListener(event, listener);
+    }
+  });
+  return EmbeddedPostgres;
+}
+
+/**
  * Boots the cluster and prepares the template database.
  *
  * Throws if the platform has no usable binaries; the caller decides whether
@@ -85,7 +108,7 @@ export async function readSchemaSql(): Promise<{ auth: string; sync: string }> {
  * the integration suite rather than failing the whole run).
  */
 export async function startCluster(): Promise<ClusterHandle> {
-  const { default: EmbeddedPostgres } = await import("embedded-postgres");
+  const EmbeddedPostgres = await importEmbeddedPostgres();
 
   const port = await freePort();
   const user = "postgres";
@@ -102,6 +125,13 @@ export async function startCluster(): Promise<ClusterHandle> {
     // report what matters themselves.
     onLog: () => {},
     onError: () => {},
+  });
+
+  // global-setup.ts stops the cluster in its teardown. This covers a run that
+  // ends without reaching it, so the server is not left running; `stop` does
+  // nothing once the cluster has already stopped.
+  process.once("exit", () => {
+    postgres.stop().catch(() => {});
   });
 
   await postgres.initialise();
