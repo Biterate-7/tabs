@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
-import { render, screen, waitFor, within } from "@testing-library/react"
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { KnowledgeGraphView } from "./knowledge-graph-view"
 import { __resetSessionsForTests, SESSIONS_STORAGE_KEY } from "@/lib/sessions/persistence"
@@ -274,7 +274,11 @@ describe("KnowledgeGraphView — saved tabs (the former tab map)", () => {
     expect(tabActions.update).toHaveBeenLastCalledWith("w3", "s3", { notes: "check the API section" })
 
     await user.click(within(inspector).getByRole("button", { name: "More actions" }))
-    await user.click(await screen.findByRole("menuitem", { name: "Move to project" }))
+    // Activated without a pointer, the way Enter or a screen reader does. A pointer would have to leave this item to
+    // reach the submenu, and Base UI's safe-polygon check closes on that leave here: jsdom reports every rect and
+    // coordinate as 0, which reads as leaving on the far side. The click below then only raced the unmount.
+    // Real Chrome keeps the submenu open through that same move, even at 20x CPU throttling.
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Move to project" }))
     await user.click(await screen.findByRole("menuitem", { name: "Thesis" }))
     expect(tabActions.move).toHaveBeenCalledWith("w3", ["s3"], "w1")
     await waitFor(() => expect(screen.queryByRole("menu")).toBeNull())

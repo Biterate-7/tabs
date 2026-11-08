@@ -87,7 +87,9 @@ beforeEach(() => {
   ;(globalThis as { chrome?: unknown }).chrome = {
     runtime: {
       onMessage: { addListener: (fn: Listener) => allListeners.push(fn) },
-      sendMessage: vi.fn(),
+      // A promise, as in MV3: content-script.js chains .then on this, and a bare
+      // vi.fn() made every browser command an uncaught TypeError.
+      sendMessage: vi.fn(async () => undefined),
     },
     tabs: {
       query: vi.fn(async (query: { currentWindow?: boolean; url?: string }) => {
