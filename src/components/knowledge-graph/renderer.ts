@@ -8,7 +8,7 @@ import { nodeRadius } from "@/lib/knowledge-graph/layout"
 import { project } from "@/lib/knowledge-graph/projection"
 import type { Lens } from "@/lib/knowledge-graph/projection"
 import type { Camera, Viewport } from "@/lib/knowledge-graph/view"
-import { PERSONAL_EDGE_KINDS } from "@/lib/knowledge-graph/types"
+import { INFERRED_EDGE_KINDS, PERSONAL_EDGE_KINDS } from "@/lib/knowledge-graph/types"
 import type { KnowledgeEdge, KnowledgeNode, Point } from "@/lib/knowledge-graph/types"
 import { FIELD_STRIDE } from "./galaxy-field"
 import type { Field, FieldColors, Nebula } from "./galaxy-field"
@@ -484,7 +484,8 @@ function drawRelations(ctx: CanvasRenderingContext2D, scene: Scene, projected: M
     const thread = (edge.kind === "contains" || edge.kind === "session-project") && a.node.kind === "project"
     const tie = PERSONAL_EDGE_KINDS.has(edge.kind)
     const isLit = scene.highlighted.has(edge.id)
-    const shown = isLit || !thread || scene.hovered === a.node.id
+    // An inferred relationship appears only on the conversation in focus; at rest the galaxy is the records' own.
+    const shown = INFERRED_EDGE_KINDS.has(edge.kind) ? isLit || scene.hovered === a.node.id || scene.hovered === b.node.id : isLit || !thread || scene.hovered === a.node.id
     if (!shown) continue
     const controls = thread ? threadControls(a.w, b.w) : bridgeControls(a.w, b.w, edge.id)
     const c1 = project(controls[0], camera, viewport, lens)

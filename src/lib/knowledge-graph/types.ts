@@ -20,6 +20,13 @@ import type { ItemKind } from "@/lib/memory/kinds";
  *   linked           the person linked two saved tabs themselves
  *   depends-on       the person said one saved tab depends on another
  *
+ * And one relationship Hubble *infers*, always labelled as such and never
+ * used to place anything:
+ *
+ *   related          two AI conversations about the same work, by their
+ *                    distinctive shared words and names
+ *                    (lib/conversations/intelligence), with the evidence
+ *
  * Ids are derived from the records' own ids, so a node keeps its identity
  * (and its place on the canvas) across edits, reloads and filter changes.
  */
@@ -54,7 +61,7 @@ export type KnowledgeNode = {
   pageIcon?: string;
 };
 
-export type KnowledgeEdgeKind = "contains" | "same-source" | "excerpt-of" | "session-project" | "session-source" | "linked" | "depends-on";
+export type KnowledgeEdgeKind = "contains" | "same-source" | "excerpt-of" | "session-project" | "session-source" | "linked" | "depends-on" | "related";
 
 export type KnowledgeEdge = {
   id: string;
@@ -64,7 +71,20 @@ export type KnowledgeEdge = {
   kind: KnowledgeEdgeKind;
   /** `depends-on` only: the dependency record behind it. */
   dependency?: { id: string; type?: DependencyType };
+  /** `related` only: how sure, and the words and names behind it. */
+  evidence?: { score: number; shared: readonly string[] };
 };
+
+/** An inferred relationship between two saved conversations, by their items. */
+export type ConversationLink = {
+  a: { workspaceId: string; key: string };
+  b: { workspaceId: string; key: string };
+  score: number;
+  shared: readonly string[];
+};
+
+/** Relationships Hubble inferred rather than proved. They never move a node. */
+export const INFERRED_EDGE_KINDS: ReadonlySet<KnowledgeEdgeKind> = new Set(["related"]);
 
 /** Relationships the person made, which they can also unmake. */
 export const PERSONAL_EDGE_KINDS: ReadonlySet<KnowledgeEdgeKind> = new Set(["linked", "depends-on"]);
@@ -84,4 +104,5 @@ export const EDGE_LABEL: Record<KnowledgeEdgeKind, string> = {
   "session-source": "Open in session",
   linked: "Linked by you",
   "depends-on": "Depends on",
+  related: "Related conversation · inferred",
 };

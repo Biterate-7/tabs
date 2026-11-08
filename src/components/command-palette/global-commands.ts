@@ -42,6 +42,8 @@ export type GlobalCommandActions = {
   goAi?: () => void
   /** The Library. Present inside the shell. */
   goLibrary?: () => void
+  /** Conversations: what Hubble understood from saved AI conversations. Present inside the shell. */
+  goConversations?: () => void
   /** Saved browser sessions. Present where sessions exist (not Hubble Desktop). */
   goSessions?: () => void
   /** The map of saved tabs. Present when there are saved tabs. */
@@ -62,6 +64,7 @@ export function buildGlobalCommands(
     { id: "go-workspace", label: current ? `Go to ${current.name}` : "Go to project", group: "Navigation", icon: Boxes, onSelect: actions.goWorkspace, keywords: ["workspace", "project", "tabs"] },
     { id: "go-graph", label: "Go to Graph", group: "Navigation", icon: Orbit, onSelect: actions.openGraph, keywords: ["relationships", "map", "knowledge graph", "connections", "saved tabs", "tab map"] },
     ...(actions.goAi ? [{ id: "go-ai", label: "Go to AI", group: "Navigation" as const, icon: MessageSquareShare, onSelect: actions.goAi, keywords: ["chatgpt", "claude", "gemini", "perplexity", "use in ai", "context"] }] : []),
+    ...(actions.goConversations ? [{ id: "go-conversations", label: "Go to Conversations", group: "Navigation" as const, icon: MessagesSquare, onSelect: actions.goConversations, keywords: ["decisions", "threads", "open questions", "tasks", "memory", "chatgpt", "claude", "gemini", "perplexity"] }] : []),
     ...(actions.goLibrary ? [{ id: "go-library", label: "Go to Library", group: "Navigation" as const, icon: Library, onSelect: actions.goLibrary, keywords: ["conversations", "files", "documents", "notes", "sources"] }] : []),
     ...(actions.goSessions ? [{ id: "go-sessions", label: "Go to Sessions", group: "Navigation" as const, icon: Layers, onSelect: actions.goSessions, keywords: ["tabs", "restore", "resume", "browser"] }] : []),
     { id: "go-favorites", label: "Go to Favorites", group: "Navigation", icon: Star, onSelect: actions.openFavorites },

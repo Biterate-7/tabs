@@ -23,6 +23,7 @@ import {
   Boxes,
   Cable,
   Radar,
+  Brain,
 } from "lucide-react"
 import { IconButton } from "@/components/ui/icon-button"
 import { cn } from "@/lib/utils"
@@ -38,6 +39,7 @@ import { AiIntegrationsSection } from "./sections/ai-integrations-section"
 import { AiAppsSection, DataSection } from "./sections/knowledge-sections"
 import { DesktopSection } from "./sections/desktop-section"
 import { ContextSection } from "./sections/context-section"
+import { ConversationIntelligenceSection } from "./sections/conversation-intelligence-section"
 import {
   AccountSettingsSection,
   AdvancedSection,
@@ -60,6 +62,8 @@ export type SettingsSection =
   | "account"
   /** What Hubble can do with each AI app (src/lib/providers/registry.ts). */
   | "ai-apps"
+  /** What Hubble reads from saved AI conversations, and the person's corrections (src/lib/conversations/intelligence). */
+  | "conversations"
   /** "AI connectors" in the nav: ChatGPT, Claude, Gemini and Grok reading Hubble over MCP (src/lib/integrations). */
   | "ai-integrations"
   /** Context detection: what Hubble for Chrome notices, suggestions, and what was kept (src/lib/intelligence). */
@@ -90,6 +94,7 @@ const BEFORE: NavItem[] = [{ id: "general", label: "General", icon: Settings2 }]
 const AFTER: NavItem[] = [
   { id: "account", label: "Account", icon: UserRound },
   { id: "ai-apps", label: "AI apps", icon: MessagesSquare },
+  { id: "conversations", label: "Conversations", icon: Brain },
   { id: "ai-integrations", label: "AI connectors", icon: Cable },
   { id: "context", label: "Context", icon: Radar },
   { id: "workspaces", label: "Projects", icon: Boxes },
@@ -220,6 +225,7 @@ export function AppearanceSettingsView({
             {active === "accent" && <AccentSection />}
             {active === "account" && <AccountSettingsSection />}
             {active === "ai-apps" && <AiAppsSection />}
+            {active === "conversations" && <ConversationIntelligenceSection onOpenAiApps={() => setActive("ai-apps")} />}
             {active === "ai-integrations" && <AiIntegrationsSection />}
             {active === "context" && <ContextSection />}
             {active === "data" && <DataSection workspaces={workspaceSettings?.workspaces ?? []} />}

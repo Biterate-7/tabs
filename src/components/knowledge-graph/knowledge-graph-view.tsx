@@ -33,7 +33,7 @@ import { copyText } from "@/lib/workspace/export"
 import { cn } from "@/lib/utils"
 import type { DependencyType } from "@/lib/dependencies/types"
 import type { Camera, Direction, Insets } from "@/lib/knowledge-graph/view"
-import type { GraphNodeKind, KnowledgeEdge, KnowledgeNode, Point } from "@/lib/knowledge-graph/types"
+import type { ConversationLink, GraphNodeKind, KnowledgeEdge, KnowledgeNode, Point } from "@/lib/knowledge-graph/types"
 import type { KnowledgeItem, KnowledgeItemRef } from "@/lib/memory/items"
 import type { Tab } from "@/lib/tabs/types"
 import type { Workspace } from "@/lib/workspace/types"
@@ -89,6 +89,8 @@ export type KnowledgeGraphViewProps = {
   onOpenSidebar?: () => void
   /** A node to select on arrival ("Show in graph"). A new nonce selects it again. */
   focus?: { nodeId: string; nonce: number }
+  /** Conversations Hubble found to be about the same work: drawn as inferred, labelled relationships. */
+  conversationLinks?: readonly ConversationLink[]
 }
 
 /**
@@ -126,9 +128,10 @@ export function KnowledgeGraphView(props: KnowledgeGraphViewProps) {
   const collectionStore = useCollectionStore(allWorkspaces)
   const tabLinks = useTabLinks(validTabIds)
 
+  const conversationLinks = props.conversationLinks
   const graph = useMemo(
-    () => buildKnowledgeGraph({ workspaces, sessions, links: tabLinks.links, dependencies: dependencyStore.dependencies }),
-    [workspaces, sessions, tabLinks.links, dependencyStore.dependencies]
+    () => buildKnowledgeGraph({ workspaces, sessions, links: tabLinks.links, dependencies: dependencyStore.dependencies, ...(conversationLinks ? { conversationLinks } : {}) }),
+    [workspaces, sessions, tabLinks.links, dependencyStore.dependencies, conversationLinks]
   )
   const byId = useMemo(() => new Map(graph.nodes.map((node) => [node.id, node])), [graph])
   const neighbours = useMemo(() => adjacency(graph), [graph])

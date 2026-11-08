@@ -68,6 +68,10 @@ export const SCOPED_STORAGE_KEYS = [
   // src/lib/knowledge-graph/persistence.ts): ids and coordinates only, but
   // the shape of one person's work, so it partitions with the rest.
   "tabdump:knowledge-graph:v1",
+  // Conversation intelligence (src/lib/conversations/intelligence/settings.ts):
+  // the person's corrections to what Hubble read from their AI conversations,
+  // and which conversations and AI apps they left out of analysis.
+  "tabdump:conversation-intelligence:v1",
 ] as const;
 
 /**
