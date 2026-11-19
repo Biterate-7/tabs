@@ -1,5 +1,11 @@
 # Hubble Desktop (Tauri) — architecture
 
+> **Since 2026-11-19 Hubble is desktop-first:** the website no longer runs the
+> app (it is the launch and download site), and Hubble for Chrome pairs with
+> Hubble Desktop. Start with [hubble-desktop-first.md](hubble-desktop-first.md);
+> the "Web Application" surface and the extension-to-website paths below are
+> history.
+
 Hubble ships from one codebase to three surfaces:
 
 ```

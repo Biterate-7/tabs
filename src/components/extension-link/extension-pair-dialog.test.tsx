@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest"
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react"
-import { ExtensionPairDialog, formatPairingCode, type PairingApi } from "./extension-pair-dialog"
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react"
+import { CONNECT_ARM_MS, ExtensionPairDialog, formatPairingCode, type PairingApi } from "./extension-pair-dialog"
 
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
 
@@ -36,10 +36,21 @@ describe("ExtensionPairDialog", () => {
     expect(screen.getByText(/Chrome on Windows · extension abcdefghijklmnop/)).toBeTruthy()
   })
 
-  it("connects only when the person presses Connect", async () => {
+  it("ignores a click on Connect in the moment the dialog appears, then connects on a deliberate one", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
     const { value, answered } = api([REQUEST])
     render(<ExtensionPairDialog api={value} />)
-    fireEvent.click(await screen.findByRole("button", { name: "Connect" }))
+    const connect = await screen.findByRole("button", { name: "Connect" })
+    // Hubble just came to the front: a click already on its way must not approve anything.
+    expect((connect as HTMLButtonElement).disabled).toBe(true)
+    fireEvent.click(connect)
+    expect(answered).toEqual([])
+    await act(async () => {
+      vi.advanceTimersByTime(CONNECT_ARM_MS)
+    })
+    expect((connect as HTMLButtonElement).disabled).toBe(false)
+    vi.useRealTimers()
+    fireEvent.click(connect)
     await waitFor(() => expect(answered).toEqual([{ id: "p1", approve: true }]))
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull())
   })

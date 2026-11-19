@@ -13,6 +13,14 @@ export type PairingApi = {
   onPairRequested(handler: () => void): Promise<() => void>
 }
 
+/**
+ * How long Connect stays unavailable after a request appears. Hubble brings
+ * its window to the front for each request, so without this a click the
+ * person was already making somewhere else could land on Connect the instant
+ * the dialog appears (measured: a trusted click ~0.5 s after it opened).
+ */
+export const CONNECT_ARM_MS = 1500
+
 /** "482913" → "482 913", as the extension's popup shows it. */
 export function formatPairingCode(code: string): string {
   return /^\d{6}$/.test(code) ? `${code.slice(0, 3)} ${code.slice(3)}` : code
@@ -31,6 +39,15 @@ export function formatPairingCode(code: string): string {
 export function ExtensionPairDialog({ api }: { api: PairingApi | undefined }) {
   const [pending, setPending] = useState<DesktopPairingRequest[]>([])
   const [busy, setBusy] = useState(false)
+  // The request Connect is armed for: only after it has been on screen CONNECT_ARM_MS.
+  const [armedFor, setArmedFor] = useState<string | null>(null)
+  const currentId = pending[0]?.id
+
+  useEffect(() => {
+    if (!currentId) return
+    const timer = setTimeout(() => setArmedFor(currentId), CONNECT_ARM_MS)
+    return () => clearTimeout(timer)
+  }, [currentId])
 
   const refresh = useCallback(async () => {
     if (!api) return
@@ -60,8 +77,12 @@ export function ExtensionPairDialog({ api }: { api: PairingApi | undefined }) {
   const current = pending[0]
   if (!api || !current) return null
 
+  const armed = armedFor === current.id
+
   async function answer(approve: boolean) {
     if (!api || !current) return
+    // Belt and braces: an approval that arrives before Connect was armed is not one.
+    if (approve && armedFor !== current.id) return
     setBusy(true)
     try {
       await api.answerPairing(current.id, approve)
@@ -93,7 +114,7 @@ export function ExtensionPairDialog({ api }: { api: PairingApi | undefined }) {
           <Button type="button" variant="outline" disabled={busy} onClick={() => void answer(false)}>
             Don&rsquo;t connect
           </Button>
-          <Button type="button" disabled={busy} onClick={() => void answer(true)}>
+          <Button type="button" disabled={busy || !armed} onClick={() => void answer(true)}>
             Connect
           </Button>
         </DialogFooter>

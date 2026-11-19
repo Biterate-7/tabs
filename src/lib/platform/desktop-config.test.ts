@@ -46,7 +46,8 @@ describe("tauri.conf.json", () => {
 
   it("points desktop development at the Next dev server so hot reload works", () => {
     expect(conf.build.devUrl).toBe("http://localhost:3000");
-    expect(conf.build.beforeDevCommand).toBe("npm run dev");
+    // The dev server serves the desktop page set (the app), not the website launch page.
+    expect(conf.build.beforeDevCommand).toBe("node scripts/desktop-dev.mjs");
   });
 
   it("keeps the Tauri globals off the window object", () => {

@@ -73,12 +73,12 @@ describe("the shipped release state", () => {
     expect(desktopLinkLabel(UNPUBLISHED)).toBe("Hubble Desktop");
   });
 
-  it("claims only what the Tauri bundle config can build", () => {
-    // tauri.conf.json bundles Windows formats only; macOS and Linux must not
-    // be listed as anything that exists.
-    expect(tauri.bundle.targets.every((target) => target === "msi" || target === "nsis")).toBe(true);
-    expect(DESKTOP_BUILDS.macos.status).toBe("coming_soon");
-    expect(DESKTOP_BUILDS.linux.status).toBe("unsupported");
+  it("claims only what has been published: the reviewed table never vouches for an unreleased macOS or Linux build", () => {
+    // The release workflow builds every OS; the table only falls back to what a person published.
+    expect(DESKTOP_BUILDS.macos.status).toBe("unpublished");
+    expect(DESKTOP_BUILDS.linux.status).toBe("unpublished");
+    expect(downloadUrl("macos")).toBeNull();
+    expect(downloadUrl("linux")).toBeNull();
   });
 
   it("never publishes a build newer than the app's version, and keeps the product name", () => {
@@ -190,13 +190,13 @@ describe("desktopOffer", () => {
     });
   });
 
-  it("never offers a macOS or Linux download", () => {
+  it("never offers a macOS or Linux download from the table — only a published release can (artifacts.ts)", () => {
     for (const builds of [DESKTOP_BUILDS, PUBLISHED]) {
-      expect(desktopOffer("macos", builds)).toMatchObject({ kind: "unavailable", reason: "Hubble for macOS is coming soon." });
-      expect(desktopOffer("linux", builds)).toMatchObject({ kind: "unavailable", reason: "Hubble Desktop is not available for Linux." });
+      expect(desktopOffer("macos", builds)).toMatchObject({ kind: "unavailable" });
+      expect(desktopOffer("linux", builds)).toMatchObject({ kind: "unavailable" });
     }
-    expect(statusLabel("macos")).toBe("Coming soon");
-    expect(statusLabel("linux")).toBe("Not available");
+    expect(statusLabel("macos")).toBe("Not yet available");
+    expect(statusLabel("linux")).toBe("Not yet available");
   });
 
   it("asks an unknown platform to choose, and tells a phone to use a computer", () => {

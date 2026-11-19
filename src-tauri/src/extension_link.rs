@@ -236,7 +236,8 @@ impl Link {
         }
         // One attempt per extension at a time: asking again replaces the earlier one.
         self.pairs.retain(|_, pair| pair.origin != origin || !matches!(pair.stage, PairStage::Waiting));
-        if self.pairs.len() >= MAX_PENDING_PAIRS {
+        // Only attempts still waiting for the person count: an answered one waiting to be collected never blocks a new one.
+        if self.pairs.values().filter(|pair| matches!(pair.stage, PairStage::Waiting)).count() >= MAX_PENDING_PAIRS {
             return Err(LinkRefusal::Busy);
         }
         let id = random_hex(16);
@@ -502,6 +503,19 @@ mod tests {
         assert!(link.answer_pairing(&late, true, after).is_err());
         assert_eq!(link.pairing_status(&late, EXT, after), Err(LinkRefusal::NotFound));
         assert!(link.links().is_empty());
+    }
+
+    #[test]
+    fn answered_attempts_never_block_a_new_one() {
+        let mut link = Link::default();
+        let now = Instant::now();
+        for _ in 0..3 {
+            let (id, _) = link.begin_pairing(EXT, None, now).unwrap();
+            link.answer_pairing(&id, false, now).unwrap();
+            let (id, _) = link.begin_pairing(OTHER, None, now).unwrap();
+            link.answer_pairing(&id, false, now).unwrap();
+        }
+        assert!(link.begin_pairing(EXT, None, now).is_ok());
     }
 
     #[test]

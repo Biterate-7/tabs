@@ -7,7 +7,7 @@
   "build": {
     "frontendDist": "../out",
     "devUrl": "http://localhost:3000",
-    "beforeDevCommand": "npm run dev",
+    "beforeDevCommand": "node scripts/desktop-dev.mjs",
     "beforeBuildCommand": "npm run desktop:export"
   },
   "app": {
@@ -37,7 +37,7 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["msi", "nsis"],
+    "targets": "all",
     "publisher": "Hubble",
     "category": "Productivity",
     "shortDescription": "One connected workspace for everything you learn with AI.",
@@ -49,6 +49,14 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
+    "macOS": {
+      "minimumSystemVersion": "11.0"
+    },
+    "linux": {
+      "deb": {
+        "section": "utils"
+      }
+    },
     "windows": {
       "webviewInstallMode": {
         "type": "downloadBootstrapper"
