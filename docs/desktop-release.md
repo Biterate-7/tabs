@@ -15,7 +15,7 @@ DRAFT GitHub Release  ←  Hubble_X.Y.Z_x64-setup.exe, Hubble_X.Y.Z_x64_en-US.ms
     ↓  a person installs each one on a clean machine and checks it
 PUBLISHED GitHub Release
     ↓  within 10 minutes (ISR + the GitHub Releases API; src/lib/desktop/release-source.ts)
-hubble-hq.vercel.app  /  /download  →  /api/download?platform=…[&format=…&arch=…]
+hubblehq.vercel.app  /  /download  →  /api/download?platform=…[&format=…&arch=…]
     ↓  +1 to the aggregate count, then 302
 the GitHub Release asset
 ```
@@ -73,10 +73,10 @@ checksum in a follow-up pull request so the fallback is current.
 After publishing, check (curl is never counted):
 
 ```bash
-curl -s https://hubble-hq.vercel.app/api/desktop/release
-curl -sI "https://hubble-hq.vercel.app/api/download?platform=windows"
-curl -sI "https://hubble-hq.vercel.app/api/download?platform=macos"
-curl -sI "https://hubble-hq.vercel.app/api/download?platform=linux&format=deb"
+curl -s https://hubblehq.vercel.app/api/desktop/release
+curl -sI "https://hubblehq.vercel.app/api/download?platform=windows"
+curl -sI "https://hubblehq.vercel.app/api/download?platform=macos"
+curl -sI "https://hubblehq.vercel.app/api/download?platform=linux&format=deb"
 ```
 
 Each answers `302` to the release asset (or `404` for a platform the release

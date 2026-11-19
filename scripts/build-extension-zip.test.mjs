@@ -254,7 +254,7 @@ describe("build-extension-zip.mjs", () => {
 // TABDUMP_ORIGIN), so the origin baked in here IS where "Dump Tabs" goes.
 describe("build-extension-zip.mjs — canonical production origin", () => {
   it("is the Vercel project's production domain, not a dead or foreign one", () => {
-    expect(CANONICAL_PRODUCTION_ORIGIN).toBe("https://hubble-hq.vercel.app");
+    expect(CANONICAL_PRODUCTION_ORIGIN).toBe("https://hubblehq.vercel.app");
     for (const dead of DEAD_ORIGINS) expect(CANONICAL_PRODUCTION_ORIGIN).not.toBe(dead);
   });
 });

@@ -84,7 +84,7 @@ export function MovePage({ release }: { release: ReleaseView | null }) {
                   <p className="m-small text-muted-foreground">Looking in this browser…</p>
                 ) : found.length === 0 ? (
                   <p className="m-small text-muted-foreground">
-                    This browser has no Hubble projects. If you used Hubble in another browser or profile, open this page there.
+                    This browser has no Hubble projects saved for this address. If you used Hubble in another browser or profile, open this page there. Projects made at hubble-hq.vercel.app are kept by your browser for that address, not this one: they are still on your computer, and can be moved from there once it is back online.
                   </p>
                 ) : (
                   <ul className="flex flex-col gap-3">

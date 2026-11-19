@@ -119,4 +119,12 @@ all three platforms (`desktop-build.yml`) without publishing.
   needs an extension → desktop activity push over the paired link.
 - **Chrome Web Store listing.** The extension is a ZIP download until
   `NEXT_PUBLIC_EXTENSION_STORE_URL` is set.
-- **The Vercel account.** See the deployment notes in the pull request.
+- **The production origin moved.** The website is the Vercel project `hubble`
+  (team `hubbleaiteam-3510`) at `https://hubblehq.vercel.app`
+  (`CANONICAL_PRODUCTION_ORIGIN`). The old `https://hubble-hq.vercel.app`
+  (project `tabs`) answers 402 DEPLOYMENT_DISABLED since its account was
+  blocked. Hubble Desktop 0.1.0 and extensions up to 0.10.0 have the old
+  origin built in, so their sign-in, relay and update check stop working
+  until people install 0.2.0 / extension 0.11.0. Browsers keep the web app's
+  old projects per address: those made at `hubble-hq` can only be saved by
+  `/move` served from `hubble-hq` itself, i.e. once that address is back.

@@ -200,7 +200,7 @@ jobs:
             if [ -f "$NOTES" ]; then cat "$NOTES"; echo; fi
             echo "## Downloads"
             echo
-            echo "Get Hubble at https://hubble-hq.vercel.app/download — it offers the right installer for your computer."
+            echo "Get Hubble at https://hubblehq.vercel.app/download — it offers the right installer for your computer."
             echo
             echo "| File | SHA-256 |"
             echo "| --- | --- |"

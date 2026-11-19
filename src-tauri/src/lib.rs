@@ -198,7 +198,7 @@ mod tests {
 
     #[test]
     fn webpages_go_to_the_browser_and_nothing_else_does() {
-        assert!(belongs_in_browser(&url("https://hubble-hq.vercel.app/")));
+        assert!(belongs_in_browser(&url("https://hubblehq.vercel.app/")));
         assert!(belongs_in_browser(&url("http://example.com/page")));
         for raw in ["mailto:someone@example.com", "file:///C:/Windows/win.ini", "ms-settings:privacy", "javascript:alert(1)"] {
             assert!(!belongs_in_browser(&url(raw)), "{raw}");

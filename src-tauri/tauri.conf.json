@@ -20,7 +20,7 @@
         "style-src": "'self' 'unsafe-inline'",
         "font-src": "'self' data:",
         "img-src": "'self' data: blob:",
-        "connect-src": "'self' ipc: http://ipc.localhost https://hubble-hq.vercel.app",
+        "connect-src": "'self' ipc: http://ipc.localhost https://hubblehq.vercel.app",
         "frame-src": "'none'",
         "object-src": "'none'",
         "base-uri": "'self'",

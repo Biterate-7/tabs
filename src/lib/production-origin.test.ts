@@ -19,11 +19,11 @@ import {
  */
 
 // What Vercel reports as VERCEL_PROJECT_PRODUCTION_URL for the project.
-const PROD_ALIAS = "hubble-hq.vercel.app";
+const PROD_ALIAS = "hubblehq.vercel.app";
 // The project's team alias: live, same deployment, but not canonical.
-const TEAM_ALIAS = "tabs-ayaan-viswanathans-projects.vercel.app";
+const TEAM_ALIAS = "hubble-hubbleaiteam-3510.vercel.app";
 // A per-deployment URL, shaped exactly like the ones Vercel generates.
-const DEPLOYMENT_URL = "tabs-gtxma8nys-ayaan-viswanathans-projects.vercel.app";
+const DEPLOYMENT_URL = "hubble-gtxma8nys-hubbleaiteam-3510.vercel.app";
 
 describe("CANONICAL_PRODUCTION_ORIGIN", () => {
   it("is the Vercel project's production domain", () => {
@@ -44,7 +44,7 @@ describe("CANONICAL_PRODUCTION_ORIGIN", () => {
 
   it("is not a per-deployment URL, which dies with its deployment", () => {
     // <project>-<9-char hash>-<team>.vercel.app
-    expect(new URL(CANONICAL_PRODUCTION_ORIGIN).hostname).not.toMatch(/^tabs-[a-z0-9]{9}-/);
+    expect(new URL(CANONICAL_PRODUCTION_ORIGIN).hostname).not.toMatch(/^(tabs|hubble)-[a-z0-9]{9}-/);
   });
 
   it("is a bare https origin, usable as a manifest match pattern prefix", () => {

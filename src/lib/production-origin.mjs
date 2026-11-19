@@ -21,13 +21,19 @@ export const DEV_ORIGIN = "http://localhost:3000";
 // deploy without anyone editing this line. Keep this equal to what that
 // variable resolves to, so a local build and a Vercel build agree.
 //
-// This is the production domain configured on the Vercel project "tabs",
-// which Vercel repoints at every production deployment. The project's team
-// alias (tabs-<team>.vercel.app) serves the same deployment but is not
-// canonical: the extension, sign-in and localStorage are all per-origin, so
-// Hubble must be reached at exactly one of them. Never a per-deployment URL
-// (tabs-<hash>-<team>.vercel.app), which dies with its deployment.
-export const CANONICAL_PRODUCTION_ORIGIN = "https://hubble-hq.vercel.app";
+// This is the production domain configured on the Vercel project "hubble"
+// (team hubbleaiteam-3510), which Vercel repoints at every production
+// deployment. The project's team alias (hubble-<team>.vercel.app) serves the
+// same deployment but is not canonical: the extension, sign-in and
+// localStorage are all per-origin, so Hubble must be reached at exactly one of
+// them. Never a per-deployment URL (hubble-<hash>-<team>.vercel.app), which
+// dies with its deployment.
+//
+// Until 2026-11-19 this was https://hubble-hq.vercel.app on the Vercel
+// project "tabs", whose account was blocked (every route answers 402
+// DEPLOYMENT_DISABLED). Hubble Desktop 0.1.0 and extensions up to 0.10.0 have
+// that origin built in.
+export const CANONICAL_PRODUCTION_ORIGIN = "https://hubblehq.vercel.app";
 
 // Origins that were once baked into shipped artifacts and must never be again.
 // Resolving to one of these is a build failure, not a warning: an extension
