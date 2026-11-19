@@ -109,7 +109,8 @@ describe("Settings → Desktop app on Hubble Web", () => {
     fetchMock.mockResolvedValue(redirect())
     render(<DesktopSection />)
     await waitFor(() => expect(screen.getByText("Hubble for macOS")).toBeTruthy())
-    expect(screen.getByText("Coming soon")).toBeTruthy()
+    // Built by the release workflow, not yet published (release.ts) — never a macOS download.
+    expect(screen.getByText("Not yet available")).toBeTruthy()
     expect(screen.getByRole("link", { name: /Download for Windows/ }).className).toMatch(/border/)
     expect(screen.queryByText(/Download for macOS/)).toBeNull()
   })
