@@ -216,7 +216,7 @@ describe("the Rust shell", () => {
     });
   });
 
-  it("exposes exactly fourteen commands to the frontend", () => {
+  it("exposes exactly twenty commands to the frontend", () => {
     const handler = libRs.match(/generate_handler!\[([\s\S]*?)\]/);
     expect(handler).not.toBeNull();
     const names = handler![1]
@@ -240,6 +240,15 @@ describe("the Rust shell", () => {
       "import_bridge::desktop_relay_begin",
       "import_bridge::desktop_relay_take",
       "import_bridge::desktop_relay_cancel",
+      // Pairing with Hubble for Chrome (extension_link.rs): the person's answer to a
+      // pairing request, Settings' list and Disconnect, and the paired requests the
+      // webview answers. Each takes ids and answers only; no token reaches the webview.
+      "import_bridge::desktop_pair_pending",
+      "import_bridge::desktop_pair_answer",
+      "import_bridge::desktop_link_list",
+      "import_bridge::desktop_link_revoke",
+      "import_bridge::desktop_link_take",
+      "import_bridge::desktop_link_answer",
       // Hubble account: status, sign in through the browser (or a pasted
       // code), sign out, and account API calls with the token attached in
       // Rust. None returns the token.

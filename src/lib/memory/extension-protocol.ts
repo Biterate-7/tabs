@@ -29,6 +29,13 @@ import type { AiProviderId } from "@/lib/providers/registry";
  *   reused    the person copied or inserted context — recorded locally
  *   save-session  save the tabs the extension read from a Chrome window as a
  *                 session (lib/sessions) — addresses, titles and icons only
+ *   add-sources   add tabs to a project the person chose in Chrome (quick
+ *                 add), through the one source pipeline (lib/resources/ingest)
+ *
+ * Two transports carry these: on Hubble Desktop, the paired loopback link
+ * (src-tauri/src/extension_link.rs) — the only one Hubble has now that it is
+ * a desktop app — and, historically, window.postMessage from the content
+ * script on the website.
  */
 
 export const MSG_PAGE_REQUEST = "HUBBLE_PAGE_REQUEST";
@@ -84,6 +91,13 @@ const requestSchema = z.discriminatedUnion("kind", [
   z.object({
     kind: z.literal("reused"),
     args: z.object({ workspaceId: id, items: z.number().int().min(0).max(50), provider: z.string().max(40).optional(), how: z.enum(["copied", "inserted"]) }),
+  }),
+  z.object({
+    kind: z.literal("add-sources"),
+    args: z.object({
+      workspaceId: id,
+      tabs: z.array(sessionTab.pick({ url: true, title: true, favicon: true })).min(1).max(200),
+    }),
   }),
   z.object({
     kind: z.literal("save-session"),

@@ -294,12 +294,12 @@ describe("the Save button on a ChatGPT conversation", () => {
       expect(status()).toBe("Nothing saved — cancelled in Hubble Desktop.");
     });
 
-    it("goes back to Hubble on the web when Hubble Desktop closed in the meantime", async () => {
+    it("asks for a project when Hubble Desktop closed in the meantime", async () => {
       await mount((payload) => (payload.workspaceId ? { ok: true, result: { outcome: "added", turns: 2 } } : { ok: false, error: "no-project" }), { desktop: DESKTOP, hubbleOpen: false });
       button().click();
       await settle();
       expect(button().textContent).toBe("Save this conversation");
-      expect(status()).toBe("Hubble Desktop isn't open any more. Choose a project to save to Hubble on the web.");
+      expect(status()).toBe("Choose a project to save to.");
       expect(button().disabled).toBe(true);
     });
 

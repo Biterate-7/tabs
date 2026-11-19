@@ -3,6 +3,7 @@
 // what is left out, and who may ask.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MSG_PAGE_REQUEST, MSG_SAVE_SESSION, TABDUMP_ORIGIN } from "../src/config.js";
+import { pairedDesktopFetch, pairedStorage } from "../test-support/paired-desktop.js";
 
 const EXTENSION_ID = "hubble-extension";
 const POPUP = { id: EXTENSION_ID };
@@ -32,9 +33,9 @@ beforeEach(() => {
   listeners = [];
   pageRequests = [];
   pageAnswer = { ok: true, result: { id: "s1", name: "Session — 19 Oct", tabs: 2, dropped: 0 } };
-  globalThis.fetch = vi.fn(async () => {
-    throw new TypeError("Failed to fetch");
-  });
+  // Hubble Desktop, paired: the session goes to it (its window answers as the Hubble page did — the mock below).
+  globalThis.fetch = pairedDesktopFetch();
+  const local = pairedStorage();
   globalThis.chrome = {
     runtime: { id: EXTENSION_ID, onMessage: { addListener: vi.fn((fn) => listeners.push(fn)) } },
     tabs: {
@@ -56,7 +57,10 @@ beforeEach(() => {
       get: vi.fn(async (id) => [thisWindow, otherWindow, privateWindow].find((win) => win.id === id)),
       getAll: vi.fn(async () => [thisWindow, otherWindow, privateWindow]),
     },
-    storage: { session: { set: vi.fn(async () => {}), get: vi.fn(async () => ({})) } },
+    storage: {
+      session: { set: vi.fn(async () => {}), get: vi.fn(async () => ({})) },
+      local: { get: vi.fn(async (key) => (key in local ? { [key]: local[key] } : {})), set: vi.fn(async () => {}), remove: vi.fn(async () => {}) },
+    },
   };
 });
 

@@ -31,7 +31,8 @@ const REPO_ROOT = path.resolve(__dirname, "..");
 const EXTENSION_DIR = path.join(REPO_ROOT, "extension");
 const OUTPUT_PATH = path.join(REPO_ROOT, "public", "hubble-extension.zip");
 
-const EXCLUDED_DIRS = new Set(["scripts"]);
+// test-support/: fakes the extension's tests share (a paired Hubble Desktop), never shipped.
+const EXCLUDED_DIRS = new Set(["scripts", "test-support"]);
 const EXCLUDED_FILES = new Set(["README.md"]);
 
 // extension/manifest.json and extension/src/config.js hardcode

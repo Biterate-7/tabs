@@ -15,6 +15,7 @@ import { suggestSessionName } from "@/lib/sessions/capture"
 import { cleanSessionName, createSession } from "@/lib/sessions/model"
 import { writeSessions } from "@/lib/sessions/persistence"
 import type { ConversationInput } from "@/lib/conversations/types"
+import type { ResourceInput } from "@/lib/resources/types"
 import type { ExtensionSearchHit, PageRequest } from "@/lib/memory/extension-protocol"
 import type { AiProviderId } from "@/lib/providers/registry"
 import type { ResourceContent } from "@/lib/resources/types"
@@ -32,6 +33,15 @@ export type ExtensionMemoryHandlers = {
   saveCapture: (workspaceId: string, input: ConversationInput, truncated: boolean) => Promise<CaptureSaveResult>
   /** The person copied or inserted context from the extension. */
   onReused?: (info: { workspaceId: string; items: number; provider?: AiProviderId; how: "copied" | "inserted" }) => void
+  /** Tabs added to a project from Chrome (quick add). Returns what each one became. */
+  addSources?: (workspaceId: string, inputs: ResourceInput[]) => { added: number; duplicates: number; failed: number }
+}
+
+/** How a paired Hubble for Chrome reaches this app (src/lib/platform/desktop.ts `desktopExtensionLink`). */
+export type ExtensionLinkTransport = {
+  take(): Promise<unknown[]>
+  answer(requestId: string, answer: { ok: true; result: unknown } | { ok: false; error: string }): Promise<void>
+  onRequest(handler: () => void): Promise<() => void>
 }
 
 // How many requestIds and captureIds are remembered: far more than are ever in flight at once.
@@ -60,9 +70,10 @@ function remember<K, V>(map: Map<K, V>, key: K, value: V) {
  *     not a second copy (and across a reload, the save's own content rule —
  *     same conversation, same text: unchanged — does the same).
  */
-export function useExtensionMemory(handlers: ExtensionMemoryHandlers, ready: boolean) {
+export function useExtensionMemory(handlers: ExtensionMemoryHandlers, ready: boolean, link?: ExtensionLinkTransport) {
   const handlersRef = useRef(handlers)
   const readyRef = useRef(ready)
+  const drainRef = useRef<(() => Promise<void>) | undefined>(undefined)
   // eslint-disable-next-line react-hooks/refs
   handlersRef.current = handlers
   // eslint-disable-next-line react-hooks/refs
@@ -184,6 +195,14 @@ export function useExtensionMemory(handlers: ExtensionMemoryHandlers, ready: boo
           // Tabs the page refused (an address that is not an ordinary web page) are counted, never hidden.
           return { ok: true, result: { id: saved.value.id, name: saved.value.name, tabs: saved.value.tabs.length, dropped: tabs.length - saved.value.tabs.length } }
         }
+        case "add-sources": {
+          const workspace = store.workspaces.find((entry) => entry.id === request.args.workspaceId)
+          if (!workspace) return { ok: false, error: "project-missing" }
+          const add = handlersRef.current.addSources
+          if (!add) return { ok: false, error: "unsupported" }
+          const inputs: ResourceInput[] = request.args.tabs.map((tab) => ({ url: tab.url, ...(tab.title ? { title: tab.title } : {}), ...(tab.favicon ? { favicon: tab.favicon } : {}) }))
+          return { ok: true, result: { ...add(workspace.id, inputs), project: subjectName(workspace) } }
+        }
         case "reused": {
           const provider = providerOrUndefined(request.args.provider)
           handlersRef.current.onReused?.({ workspaceId: request.args.workspaceId, items: request.args.items, how: request.args.how, ...(provider ? { provider } : {}) })
@@ -230,12 +249,71 @@ export function useExtensionMemory(handlers: ExtensionMemoryHandlers, ready: boo
 
     window.addEventListener("message", handleMessage)
     announceReady()
-    return () => window.removeEventListener("message", handleMessage)
+
+    // Hubble Desktop: the same requests from a paired Hubble for Chrome, through Rust (extension_link.rs).
+    // Each one waits in Rust until it is taken here, so a request that arrived while this window was starting is
+    // answered as soon as it can be; one this window can't answer yet is told "not-ready" and asked again.
+    let active = true
+    let unlisten: (() => void) | undefined
+    let draining = false
+    let again = false
+    async function drain() {
+      if (!link) return
+      if (draining) {
+        again = true
+        return
+      }
+      draining = true
+      try {
+        do {
+          again = false
+          const waiting = await link.take().catch(() => [])
+          for (const raw of waiting) {
+            const envelope = readPageRequest(raw)
+            const requestId = (raw as { requestId?: unknown } | null)?.requestId
+            if (!envelope) {
+              if (typeof requestId === "string") void link.answer(requestId, { ok: false, error: "invalid" }).catch(() => {})
+              continue
+            }
+            if (!readyRef.current) {
+              void link.answer(envelope.requestId, { ok: false, error: "not-ready" }).catch(() => {})
+              continue
+            }
+            void answer(envelope.request)
+              .catch(() => ({ ok: false as const, error: "failed" }))
+              .then((body) => link.answer(envelope.requestId, body))
+              .catch(() => {})
+          }
+        } while (again && active)
+      } finally {
+        draining = false
+      }
+    }
+    if (link) {
+      void link.onRequest(() => void drain()).then((stop) => {
+        if (active) unlisten = stop
+        else stop()
+      })
+      void drain()
+    }
+    drainRef.current = drain
+
+    return () => {
+      active = false
+      unlisten?.()
+      drainRef.current = undefined
+      window.removeEventListener("message", handleMessage)
+    }
+    // `link` is the platform's one module-level object (or undefined on the web): it never changes for a mounted shell.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // Listening (above), and again once able to answer: anything the extension sent before now is posted again.
+  // Listening (above), and again once able to answer: anything the extension sent before now is posted again,
+  // and anything waiting on the desktop link is taken.
   useEffect(() => {
-    if (ready) announceReady()
+    if (!ready) return
+    announceReady()
+    void drainRef.current?.()
   }, [ready])
 }
 

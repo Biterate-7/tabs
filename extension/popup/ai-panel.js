@@ -54,25 +54,26 @@ export const CAPTURE_ERRORS = {
   "tab-changed": "This tab moved to another conversation, so nothing was saved. Save again to keep the one on screen now.",
   "already-saving": "Still saving this conversation. Wait a moment, then look again.",
   "hubble-unreachable": "Hubble couldn't be opened. Check your connection and try again.",
-  "no-response": "Hubble didn't answer. Open Hubble, then try again.",
-  timeout: "Hubble didn't answer in time. Open Hubble, then try again.",
-  "not-ready": "Hubble is still loading. Try again in a moment.",
+  "no-response": "Hubble Desktop didn't answer. Open it, then try again.",
+  timeout: "Hubble Desktop didn't answer in time. Try again in a moment.",
+  "not-ready": "Hubble Desktop is still starting. Try again in a moment.",
+  "not-paired": "Connect Hubble for Chrome to Hubble Desktop first — Connect is below.",
   failed: "Something went wrong. Try again.",
   // Saving to Hubble Desktop (background.js → src/desktop-add.js).
-  "no-project": "Hubble Desktop isn't open any more. Choose a project to save to Hubble on the web.",
+  "no-project": "Choose a project to save to.",
   "desktop-cancelled": "Nothing saved — cancelled in Hubble Desktop.",
   "desktop-expired": "Nothing saved — no project was chosen in Hubble Desktop in time.",
   "desktop-failed": "Hubble Desktop couldn't keep the conversation, so nothing was saved. Try again.",
   "desktop-busy": "Hubble Desktop is busy. Finish what's open there, then try again.",
   "already-running": "Still saving the last conversation. Choose a project in Hubble Desktop first.",
   "invalid-payload": "Hubble Desktop couldn't take this conversation. Reload the page and try again.",
-  "desktop-not-responding": "Hubble Desktop isn't responding. Try again, or close it to save to Hubble on the web.",
-  "desktop-session-lost": "Hubble Desktop isn't responding. Try again, or close it to save to Hubble on the web.",
+  "desktop-not-responding": "Hubble Desktop isn't responding. Try again in a moment.",
+  "desktop-session-lost": "Hubble Desktop isn't responding. Try again in a moment.",
   // A save waiting in the extension (src/capture-queue.js) that could not be delivered.
-  "queue-full": "Too many conversations are waiting to be saved. Open Hubble so they can go in, then try again.",
-  expired: "Hubble wasn't opened for a day, so this conversation was never saved. Save it again.",
+  "queue-full": "Too many conversations are waiting to be saved. Open Hubble Desktop so they can go in, then try again.",
+  expired: "Hubble Desktop wasn't opened for a day, so this conversation was never saved. Save it again.",
   interrupted: "Saving was interrupted. Try again.",
-  "no-hubble-tab": "Hubble isn't open, so nothing was saved yet.",
+  "no-hubble-tab": "Hubble Desktop isn't open, so nothing was saved yet.",
 };
 
 export function captureError(reason) {
@@ -81,11 +82,12 @@ export function captureError(reason) {
 
 // Why a save is still waiting, in a few words: what it waits for is said after.
 const WAITING_WORDS = {
-  "no-hubble-tab": "Hubble isn't open",
-  "hubble-unreachable": "Hubble couldn't be opened",
-  "no-response": "Hubble didn't answer",
-  timeout: "Hubble didn't answer in time",
-  "not-ready": "Hubble was still loading",
+  "no-hubble-tab": "Hubble Desktop isn't open",
+  "not-paired": "Hubble for Chrome isn't connected to Hubble Desktop",
+  "hubble-unreachable": "Hubble Desktop couldn't be opened",
+  "no-response": "Hubble Desktop didn't answer",
+  timeout: "Hubble Desktop didn't answer in time",
+  "not-ready": "Hubble Desktop was still starting",
   interrupted: "saving was interrupted",
   failed: "something went wrong",
   "project-missing": "Hubble hadn't caught up with that project yet",
@@ -104,7 +106,7 @@ export function describeCaptureJob(job, projectName, now = Date.now()) {
   if (job.status === "queued") {
     const why = WAITING_WORDS[job.error] ?? "it didn't go through";
     const seconds = Number.isFinite(job.nextAttemptAt) ? Math.max(1, Math.round((job.nextAttemptAt - now) / 1000)) : undefined;
-    const when = seconds === undefined ? "when Hubble is open" : seconds < 60 ? `in ${seconds} s` : `in ${Math.round(seconds / 60)} min`;
+    const when = seconds === undefined ? "when Hubble Desktop is open" : seconds < 60 ? `in ${seconds} s` : `in ${Math.round(seconds / 60)} min`;
     return `Not saved yet — ${why}. Hubble for Chrome will try again ${when}.`;
   }
   return captureError(job.error);
@@ -357,7 +359,7 @@ export async function initAiPanel(activeTab, doc = document) {
     fillProjects(remembered ? [{ id: remembered.id, name: remembered.name || "Your project" }] : [], remembered?.id);
     // Saving to Hubble Desktop needs no Hubble tab; only searching does.
     openButton.hidden = toDesktop;
-    if (!toDesktop) say(captureStatus, remembered ? "Hubble isn't open; it will open to save the conversation." : "Open Hubble to choose a project.");
+    if (!toDesktop) say(captureStatus, remembered ? "Hubble Desktop isn't open; it will open to save the conversation." : "Open Hubble Desktop to choose a project.");
     return false;
   }
 
@@ -438,7 +440,7 @@ export async function initAiPanel(activeTab, doc = document) {
     if (!answer?.ok) {
       hits = [];
       renderHits();
-      say(memoryStatus, answer?.error === "no-hubble-tab" ? "Open Hubble to search your projects." : captureError(answer?.error));
+      say(memoryStatus, answer?.error === "no-hubble-tab" ? "Open Hubble Desktop to search your projects." : answer?.error === "not-paired" ? "Connect to Hubble Desktop to search your projects." : captureError(answer?.error));
       return;
     }
     // Ticked items stay ticked while the search changes.

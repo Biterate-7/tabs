@@ -245,6 +245,19 @@ export const SOURCE_STATUS_POLL_LIMIT_MS = 20000;
 // src/hooks/use-extension-memory.ts and src/lib/memory/extension-protocol.ts).
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Pairing with Hubble Desktop (src/desktop-link.js; the desktop half is
+// src-tauri/src/extension_link.rs). Hubble is a desktop app: once paired,
+// every request below that used to go to a Hubble tab goes to it instead.
+// ---------------------------------------------------------------------------
+
+// Popup -> background: "connect to Hubble Desktop" (starts pairing; the state is in PAIR_STATE_KEY).
+export const MSG_DESKTOP_PAIR = "HUBBLE_DESKTOP_PAIR";
+// Popup -> background: "disconnect from Hubble Desktop".
+export const MSG_DESKTOP_UNPAIR = "HUBBLE_DESKTOP_UNPAIR";
+// The alarm that looks for Hubble Desktop while saves are waiting for it, so they go in once it starts.
+export const DESKTOP_WATCH_ALARM = "hubble-desktop-watch";
+
 // Popup -> background: "save the conversation in this tab to this project".
 export const MSG_CAPTURE_CONVERSATION = "HUBBLE_CAPTURE_CONVERSATION";
 // Popup -> background: a memory request for the Hubble page (projects, search, bundle, reused).

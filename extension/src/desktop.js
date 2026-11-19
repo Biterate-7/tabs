@@ -419,7 +419,7 @@ export function describeDesktopResult(outcome) {
         detail: outcome.blankOnly ? "A blank tab has nothing to add. Open a page in it first." : notSent > 0 ? "Chrome's own pages can't be added. Web pages, PDFs and videos can." : "There are no tabs to add.",
       };
     case "desktop-not-found":
-      return { tone: "error", title: "Hubble Desktop wasn't found", detail: "Open Hubble Web instead?", actions: ["web", "retry"] };
+      return { tone: "error", title: "Hubble Desktop wasn't found", detail: "Install Hubble Desktop, open it, then try again.", actions: ["web", "retry"] };
     case "desktop-busy":
       return { tone: "error", title: "Hubble Desktop is busy", detail: "Finish adding the last tabs in Hubble Desktop, then try again.", actions: ["retry"] };
     case "invalid-payload":
@@ -429,7 +429,7 @@ export function describeDesktopResult(outcome) {
     case "desktop-not-responding":
     case "desktop-session-lost":
     default:
-      return { tone: "error", title: "Hubble Desktop isn't responding", detail: "Try again, or use Hubble Web instead.", actions: ["retry", "web"] };
+      return { tone: "error", title: "Hubble Desktop isn't responding", detail: "Try again in a moment.", actions: ["retry"] };
   }
 }
 
@@ -472,7 +472,7 @@ export function describeDesktopSave(outcome) {
     case "desktop-not-responding":
     case "desktop-session-lost":
     default:
-      return { tone: "error", title: "Hubble Desktop isn't responding", detail: "Try again, or close Hubble Desktop to save to Hubble on the web." };
+      return { tone: "error", title: "Hubble Desktop isn't responding", detail: "Try again in a moment." };
   }
 }
 

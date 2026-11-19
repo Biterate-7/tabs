@@ -215,16 +215,16 @@ describe("Add to Hubble Desktop", () => {
     expect(outcome).toMatchObject({ status: "done" });
   });
 
-  it("tells the popup whether Hubble Desktop is open", async () => {
+  it("tells the popup whether Hubble Desktop is open, and whether this extension is connected to it", async () => {
     await load();
-    await expect(send({ type: MSG_DESKTOP_STATUS })).resolves.toEqual({ ok: true, available: true, conversations: false, seen: true });
+    await expect(send({ type: MSG_DESKTOP_STATUS })).resolves.toEqual({ ok: true, available: true, conversations: true, paired: false, pairable: true, seen: true });
     desktop.running = false;
-    await expect(send({ type: MSG_DESKTOP_STATUS })).resolves.toEqual({ ok: true, available: false, conversations: false, seen: true });
+    await expect(send({ type: MSG_DESKTOP_STATUS })).resolves.toEqual({ ok: true, available: false, conversations: false, paired: false, pairable: true, seen: true });
   });
 });
 
 describe("after a failure", () => {
-  it("shows Retry and Open Hubble Web, and Retry sends the same tabs again", async () => {
+  it("shows Retry, and Retry sends the same tabs again", async () => {
     await load();
     const sendFetch = desktop.fetch;
     let failNext = true;
@@ -236,35 +236,28 @@ describe("after a failure", () => {
       return sendFetch(url, init);
     });
     const failed = await send({ type: MSG_ADD_TO_DESKTOP, payload: { scope: "selected", windowId: 10 } });
-    expect(failed.toast).toMatchObject({ title: "Hubble Desktop isn't responding", actions: ["retry", "web"] });
-    expect(finalToast().actions).toEqual([
-      { action: "retry", label: "Try again" },
-      { action: "web", label: "Open Hubble Web" },
-    ]);
+    expect(failed.toast).toMatchObject({ title: "Hubble Desktop isn't responding", actions: ["retry"] });
+    expect(finalToast().actions).toEqual([{ action: "retry", label: "Try again" }]);
 
     const retried = await send({ type: MSG_DESKTOP_ACTION, payload: { action: "retry" } }, { id: "hubble-ext", tab: { id: 1 } });
     expect(retried).toMatchObject({ status: "done" });
     expect(desktop.sent.at(-1).tabs.map((tab) => tab.url)).toEqual(["https://a.example/", "https://b.example/"]);
   });
 
-  it("Open Hubble Web adds the same tabs to the project open in Hubble on the web", async () => {
-    await load();
-    session[DESKTOP_LAST_KEY] = { scope: "current", windowId: 10 };
-    chrome.tabs.query.mockImplementation(async (query) => {
-      if (query.url) return [fakeTab({ id: 42, url: `${TABDUMP_ORIGIN}/`, active: true })];
-      if (query.active) return WINDOW.filter((tab) => tab.active);
-      return WINDOW;
-    });
-    chrome.tabs.sendMessage.mockImplementation(async (_tabId, message) => (message.type === "TABDUMP_IMPORT" ? { ok: true, accepted: 1 } : undefined));
-    await send({ type: MSG_DESKTOP_ACTION, payload: { action: "web" } }, { id: "hubble-ext", tab: { id: 1 } });
-    expect(chrome.tabs.sendMessage).toHaveBeenCalledWith(42, expect.objectContaining({ type: "TABDUMP_IMPORT", payload: expect.objectContaining({ target: { workspaceId: "ws-history", as: "sources" } }) }));
-  });
-
-  it("Open Hubble Web with no web project opens Hubble Web to choose one", async () => {
-    delete local[TARGET_PROJECT_KEY];
+  it("Get Hubble Desktop opens the download page when Hubble Desktop isn't there — never a web app", async () => {
+    desktop.running = false;
     await load();
     await send({ type: MSG_DESKTOP_ACTION, payload: { action: "web" } });
-    expect(chrome.tabs.create).toHaveBeenCalledWith({ url: TABDUMP_ORIGIN, active: true });
+    expect(chrome.tabs.create).toHaveBeenCalledWith({ url: `${TABDUMP_ORIGIN}/download`, active: true });
+    expect(chrome.tabs.sendMessage).not.toHaveBeenCalled();
+  });
+
+  it("Get Hubble Desktop with Hubble running sends the same tabs again", async () => {
+    await load();
+    session[DESKTOP_LAST_KEY] = { scope: "current", windowId: 10 };
+    const outcome = await send({ type: MSG_DESKTOP_ACTION, payload: { action: "web" } }, { id: "hubble-ext", tab: { id: 1 } });
+    expect(outcome).toMatchObject({ status: "done" });
+    expect(chrome.tabs.create).not.toHaveBeenCalled();
   });
 
   it("ignores actions from anyone but this extension, and unknown actions", async () => {

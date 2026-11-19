@@ -93,7 +93,8 @@ import { useExtensionWorkspaceQuery } from "@/hooks/use-extension-workspace-quer
 import { useExtensionQuickAdd } from "@/hooks/use-extension-quick-add"
 import { useDesktopImport } from "@/hooks/use-desktop-import"
 import { useIsDesktop } from "@/hooks/use-is-desktop"
-import { desktopImport } from "@/lib/platform"
+import { desktopImport, desktopLink } from "@/lib/platform"
+import { ExtensionPairDialog } from "@/components/extension-link/extension-pair-dialog"
 import { outcomeFromIngestion, type DesktopConversationRequest, type DesktopImportRequest, type DesktopTabsRequest } from "@/lib/desktop/import-protocol"
 import { createSession } from "@/lib/sessions/model"
 import { describeWriteError } from "@/lib/sessions/messages"
@@ -1000,8 +1001,19 @@ export function AppShell() {
         recordLoopMilestone(how === "inserted" ? "memory_inserted" : "memory_copied", provider ? { provider } : {})
         recordProjectEvent({ workspaceId, kind: "memory_reused", count: items, ...(provider ? { provider } : {}) })
       },
+      // Quick add from a paired Hubble for Chrome: the same source pipeline as every other way in.
+      addSources: (workspaceId, inputs) => {
+        const outcomes = handleAddSources(workspaceId, inputs, "extension")
+        return {
+          added: outcomes.filter((outcome) => outcome.status === "added" || outcome.status === "adopted").length,
+          duplicates: outcomes.filter((outcome) => outcome.status === "duplicate").length,
+          failed: outcomes.filter((outcome) => outcome.status === "invalid").length,
+        }
+      },
     },
-    extensionCanIngest
+    extensionCanIngest,
+    // Hubble Desktop: a paired Hubble for Chrome asks through Rust (src-tauri/src/extension_link.rs).
+    desktopLink()
   )
   useExtensionWorkspaceQuery(currentWorkspace?.tabs ?? [], extensionProjects)
   // Quick add: the extension's tab-strip menu and shortcut add to the project on screen.
@@ -2178,6 +2190,8 @@ export function AppShell() {
         searchContent={paletteContent}
       />
       {desktopImportDialog}
+      {/* "Connect Hubble for Chrome?" — pairing (src-tauri/src/extension_link.rs). Desktop only. */}
+      <ExtensionPairDialog api={isDesktopShell ? desktopLink() : undefined} />
       <OpenTabsOrganize
         open={organizeOpenTabs}
         onOpenChange={setOrganizeOpenTabs}

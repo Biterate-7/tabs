@@ -46,7 +46,12 @@ export const CAPTURE_KEEP_FAILED_MS = 24 * 60 * 60 * 1000;
 
 // Failures that say nothing about the conversation: Hubble wasn't open, was
 // loading, or didn't answer. Worth trying again. Everything else is an answer.
-const TRANSIENT = new Set(["no-hubble-tab", "hubble-unreachable", "no-response", "timeout", "not-ready", "failed", "interrupted"]);
+// "not-paired": kept until this extension is connected to Hubble Desktop again — never dropped for it.
+// Hubble is up and answering — a Hubble page said so (before Hubble was a desktop app), or Hubble Desktop answered /
+// was just paired: everything waiting goes now, whatever its backoff said.
+const READY_REASONS = new Set(["hubble-ready", "desktop-ready", "desktop-paired"]);
+
+const TRANSIENT = new Set(["no-hubble-tab", "hubble-unreachable", "no-response", "timeout", "not-ready", "failed", "interrupted", "not-paired"]);
 
 export function isTransientCaptureError(error) {
   return TRANSIENT.has(error);
@@ -205,7 +210,7 @@ export function createCaptureQueue(deps) {
         // Saved: the text is in Hubble now, so the extension's copy goes.
         delete next.capture;
         delete next.error;
-      } else if (outcome.error === "no-hubble-tab" && !openIfMissing) {
+      } else if ((outcome.error === "no-hubble-tab" || outcome.error === "not-paired") && !openIfMissing) {
         // Hubble was closed since: this was no attempt at all. It waits for a Hubble page to say it is up (flush "hubble-ready").
         next = { ...current, status: "queued", error: outcome.error, attempts: Math.max(0, current.attempts - 1), updatedAt: at };
         delete next.nextAttemptAt;
@@ -279,7 +284,7 @@ export function createCaptureQueue(deps) {
       const list = await locked(load);
       const at = now();
       const due = list.filter(
-        (job) => job.status === "queued" && !delivering.has(job.id) && (reason === "hubble-ready" || (Number.isFinite(job.nextAttemptAt) && job.nextAttemptAt <= at))
+        (job) => job.status === "queued" && !delivering.has(job.id) && (READY_REASONS.has(reason) || (Number.isFinite(job.nextAttemptAt) && job.nextAttemptAt <= at))
       );
       const results = [];
       // One at a time: they go to the same page, and a burst helps nobody.
