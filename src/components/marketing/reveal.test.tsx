@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs"
 import { join } from "node:path"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { act, render } from "@testing-library/react"
-import { MarketingPage } from "./marketing-page"
+import { LaunchPage } from "./launch-page"
 import { REVEAL_THRESHOLD } from "./reveal"
 
 /** Every section below the hero, by what it is about. */
@@ -14,7 +14,7 @@ const SECTION_TEXT = [
   "Start your next chat where you left off.",
   "Your knowledge, under your control.",
   "Changelog",
-  "Try Hubble now.",
+  "Get Hubble for your computer.",
 ]
 
 /** An IntersectionObserver the test drives by hand, as scrolling would. */
@@ -69,7 +69,7 @@ function sections() {
 }
 
 function renderPage() {
-  return render(<MarketingPage onInstallExtension={vi.fn()} onPasteTabs={vi.fn()} />)
+  return render(<LaunchPage release={null} />)
 }
 
 beforeEach(() => {

@@ -36,14 +36,31 @@ const nextConfig: NextConfig = isDesktopBuild
       // what a file-backed asset protocol can resolve without a server's
       // extensionless-path rewriting.
       trailingSlash: true,
-      pageExtensions: ["tsx"],
+      // `page.desktop.tsx` is the app; `page.web.tsx` (the launch site and
+      // the web-only account pages) is not a page at all here. See WEB_PAGES.
+      pageExtensions: ["desktop.tsx", "tsx"],
     }
   : {
+      /*
+       * The website is Hubble's launch site, not the app. Hubble itself is
+       * Hubble Desktop: its entry, src/app/page.desktop.tsx, is not a page in
+       * this build (nothing it imports is bundled for the site), and
+       * src/app/page.web.tsx — the launch page — takes `/` instead. Files
+       * named `*.web.tsx` exist only on the website; route handlers (`.ts`)
+       * and the OAuth authorize page (`page.ts`) are website-only already.
+       */
+      pageExtensions: ["web.tsx", "tsx", "ts"],
       // The extension archive was renamed with the TabDump → Hubble rebrand.
       // Links to the old filename (docs, bookmarks, earlier builds of the
       // onboarding guide) keep working.
       async redirects() {
-        return [{ source: "/tabdump-extension.zip", destination: "/hubble-extension.zip", permanent: true }];
+        return [
+          { source: "/tabdump-extension.zip", destination: "/hubble-extension.zip", permanent: true },
+          // The landing page moved from /welcome to / when the web app was
+          // retired; shared links and the OAuth metadata's old documentation
+          // URL keep working.
+          { source: "/welcome", destination: "/", permanent: true },
+        ];
       },
       // The OAuth consent page grants an AI client access to a person's
       // workspaces, so no other site may frame it (clickjacking), and it is

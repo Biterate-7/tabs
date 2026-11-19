@@ -68,7 +68,7 @@ export function protectedResourceMetadata(issuer: string) {
     scopes_supported: [...HUBBLE_SCOPES],
     bearer_methods_supported: ["header"],
     resource_name: "Hubble",
-    resource_documentation: `${issuer}/welcome`,
+    resource_documentation: `${issuer}/`,
   };
 }
 
@@ -89,7 +89,7 @@ export function authorizationServerMetadata(issuer: string) {
     scopes_supported: [...HUBBLE_SCOPES],
     // Every authorization response carries `iss` (RFC 9207).
     authorization_response_iss_parameter_supported: true,
-    service_documentation: `${issuer}/welcome`,
+    service_documentation: `${issuer}/`,
   };
 }
 

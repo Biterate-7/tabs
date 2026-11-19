@@ -130,43 +130,17 @@ afterEach(() => {
 const LANDING_HEADING = "One connected workspace for everything you learn with AI.";
 
 describe("AppShell first run", () => {
-  it("greets a visitor who has never used Hubble with the public landing page", async () => {
-    // Undoes the shared beforeEach: this is the one case that wants the
-    // genuinely untouched state a brand-new visitor arrives in.
+  // The website is the launch site; the shell is Hubble Desktop's. A first
+  // launch opens the app itself, never a pitch for the app it already is.
+  it("opens a brand-new install straight into the app, with no landing page", async () => {
     window.localStorage.clear();
     render(<AppShell />);
 
-    const heading = await screen.findByRole("heading", { level: 1, name: LANDING_HEADING });
-    expect(heading).toBeTruthy();
-    // The app shell itself must not be mounted underneath it — no rail, no
-    // Home, nothing for a stray click to reach.
-    expect(screen.queryByRole("heading", { name: "No projects yet" })).toBeNull();
-    expect(screen.queryByRole("navigation", { name: "Projects" })).toBeNull();
+    expect(await screen.findByRole("heading", { name: "Welcome to Hubble" })).toBeTruthy();
+    expect(screen.queryByRole("heading", { level: 1, name: LANDING_HEADING })).toBeNull();
   });
 
-  it("hands over to the app once the visitor chooses to open Hubble", async () => {
-    window.localStorage.clear();
-    const user = userEvent.setup();
-    render(<AppShell />);
-
-    await user.click((await screen.findAllByRole("button", { name: /Open Hubble/ }))[0]);
-
-    // Home, with the one thing to do first.
-    expect(await screen.findByRole("heading", { name: "No projects yet" })).toBeTruthy();
-  });
-
-  it("sends a returning visitor straight to the app, landing page skipped", async () => {
-    // Onboarding already handled (the shared beforeEach) and nothing
-    // persisted: an empty workspace belongs to the app, not to marketing.
-    render(<AppShell />);
-    expect(await screen.findByRole("heading", { name: "No projects yet" })).toBeTruthy();
-    expect(screen.queryByRole("heading", { name: LANDING_HEADING })).toBeNull();
-  });
-
-  it("keeps a visitor who has dumped tabs out of the landing page", async () => {
-    // The gate is conservative on both halves — the onboarding flag AND an
-    // entirely empty store. Someone with real tabs is never sent to marketing,
-    // whatever the flag says.
+  it("keeps someone with saved tabs in their projects", async () => {
     window.localStorage.clear();
     saveWorkspace([makeTab({ id: "t1" })]);
     render(<AppShell />);

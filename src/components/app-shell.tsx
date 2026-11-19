@@ -2,7 +2,6 @@
 
 import { useEffect, useMemo, useRef, useState } from "react"
 import { toast } from "sonner"
-import { FirstRunLanding } from "@/components/marketing/first-run-landing"
 import { getOnboardingState } from "@/lib/onboarding"
 import { WorkspaceView } from "@/components/workspace/workspace-view"
 import { HomeView } from "@/components/home/home-view"
@@ -1881,31 +1880,9 @@ export function AppShell() {
     />
   ) : null
 
-  // A first-time visitor gets Hubble's public landing page, full-bleed: no
-  // sidebar, no content-width clamp, none of the workspace chrome that means
-  // nothing to someone who has not dumped anything yet.
-  //
-  // The condition is deliberately conservative on both halves — the onboarding
-  // flag AND an entirely empty store — so a returning user who merely cleared a
-  // workspace is never sent back to marketing; they fall through to
-  // the project's own empty state below (Hubble 2.0), which still offers the
-  // paste-your-tabs field the old in-shell landing had.
-  //
-  // AppShell stays mounted around this, so an extension dump arriving mid-scroll
-  // still lands in the store and the next render swaps straight through to the
-  // real app without the landing page having to know it happened.
-  //
-  // Web only: Hubble Desktop has already been installed — its first screen is
-  // Home's "Welcome to Hubble", never a pitch for the app it already is.
-  if (!onboarded && !isDesktopShell && store.workspaces.every((w) => w.tabs.length === 0)) {
-    return (
-      <>
-        <FirstRunLanding onEnterApp={() => setOnboarded(true)} />
-        {/* Tabs sent from Chrome on a first launch still get their choice. */}
-        {desktopImportDialog}
-      </>
-    )
-  }
+  // The app is Hubble Desktop's, and only Hubble Desktop's: the website is the
+  // launch site (src/app/page.web.tsx), so there is no in-shell landing page.
+  // A first launch opens Home's "Welcome to Hubble" (`firstRun` below).
 
   /*
     Every destination other than the workspace itself, resolved to the

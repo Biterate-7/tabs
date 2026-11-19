@@ -1,52 +1,40 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react"
+import { render, screen, waitFor, within } from "@testing-library/react"
+import { DownloadPage, ReleaseNotes } from "./download-page"
+import type { ReleaseView } from "@/lib/desktop/artifacts"
 
-const push = vi.fn()
-vi.mock("next/navigation", () => ({ useRouter: () => ({ push }) }))
-
-/** The release manifest, replaceable per test so the published state can be exercised before it is real. */
-const builds = vi.hoisted(() => ({
-  current: {
-    windows: { status: "unpublished" },
-    macos: { status: "coming_soon" },
-    linux: { status: "unsupported" },
-  } as Record<string, unknown>,
-}))
-vi.mock("@/lib/desktop/release", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib/desktop/release")>()
-  type Builds = Parameters<typeof actual.downloadUrl>[1]
-  const live = () => builds.current as Builds
-  return {
-    ...actual,
-    get DESKTOP_BUILDS() {
-      return live()
-    },
-    downloadUrl: (os: Parameters<typeof actual.downloadUrl>[0]) => actual.downloadUrl(os, live()),
-    downloadHref: (os: Parameters<typeof actual.downloadHref>[0]) => actual.downloadHref(os, live()),
-    desktopOffer: (visitor: Parameters<typeof actual.desktopOffer>[0]) => actual.desktopOffer(visitor, live()),
-    statusLabel: (os: Parameters<typeof actual.statusLabel>[0]) => actual.statusLabel(os, live()),
-    desktopLinkLabel: () => actual.desktopLinkLabel(live()),
-    anyDesktopBuildPublished: () => actual.anyDesktopBuildPublished(live()),
-  }
-})
-
-import { DownloadPage } from "./download-page"
-import { getOnboardingState } from "@/lib/onboarding"
-
-const UNPUBLISHED = {
-  windows: { status: "unpublished" },
-  macos: { status: "coming_soon" },
-  linux: { status: "unsupported" },
-}
 const SHA = "b".repeat(64)
-/** Every download link is the measured endpoint; the GitHub asset URL never appears in the page. */
-const MEASURED = "/api/download?platform=windows"
 
 const UA = {
   windows: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36",
   mac: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15",
   linux: "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36",
+  iphone: "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1",
 }
+
+function release(artifacts: ReleaseView["artifacts"]): ReleaseView {
+  return {
+    version: "0.2.0",
+    tag: "desktop-v0.2.0",
+    publishedAt: "2026-11-19T10:00:00Z",
+    notes: "## Highlights\n- Hubble is a desktop app\n- Pair [Hubble for Chrome](https://example.com) with it\n<script>alert(1)</script>",
+    artifacts,
+    source: "github",
+    pageUrl: "https://github.com/Biterate-7/tabs/releases/tag/desktop-v0.2.0",
+  }
+}
+
+const WINDOWS_ONLY = release([
+  { os: "windows", format: "nsis", arch: "x64", name: "Hubble_0.2.0_x64-setup.exe", bytes: 31_000_000, sha256: SHA },
+  { os: "windows", format: "msi", arch: "x64", name: "Hubble_0.2.0_x64_en-US.msi", bytes: 32_000_000, sha256: SHA },
+])
+
+const ALL = release([
+  ...WINDOWS_ONLY.artifacts,
+  { os: "macos", format: "dmg", arch: "universal", name: "Hubble_0.2.0_universal.dmg", bytes: 40_000_000, sha256: SHA },
+  { os: "linux", format: "appimage", arch: "x64", name: "Hubble_0.2.0_amd64.AppImage", bytes: 90_000_000, sha256: SHA },
+  { os: "linux", format: "deb", arch: "x64", name: "Hubble_0.2.0_amd64.deb", bytes: 20_000_000, sha256: SHA },
+])
 
 function asVisitor(userAgent: string) {
   vi.spyOn(window.navigator, "userAgent", "get").mockReturnValue(userAgent)
@@ -56,154 +44,117 @@ function hero() {
   return screen.getByRole("heading", { level: 1 }).closest("section")!
 }
 
+function platformCard(name: string) {
+  const list = document.getElementById("platforms")!
+  return [...list.querySelectorAll("ul > li")].find((li) => li.querySelector("p")?.textContent === name) as HTMLElement
+}
+
 beforeEach(() => {
-  builds.current = { ...UNPUBLISHED }
-  push.mockReset()
   window.localStorage.clear()
-  vi.stubGlobal(
-    "matchMedia",
-    vi.fn().mockReturnValue({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() })
-  )
+  vi.stubGlobal("matchMedia", vi.fn().mockReturnValue({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() }))
 })
 afterEach(() => {
   vi.restoreAllMocks()
   vi.unstubAllGlobals()
 })
 
-describe("/download while no installer is published", () => {
-  it("tells a Windows visitor plainly that the Windows build is not yet available, with no download link", async () => {
+describe("/download", () => {
+  it("offers a Windows visitor the Windows installer, through the measured link", async () => {
     asVisitor(UA.windows)
-    render(<DownloadPage />)
-    expect(await within(hero()).findByText("Hubble for Windows")).toBeTruthy()
-    expect(within(hero()).getByText("The Windows build is not publicly available yet.")).toBeTruthy()
-    // No fake download anywhere on the page.
-    expect(screen.queryByRole("link", { name: /download/i })).toBeNull()
-    for (const link of screen.getAllByRole("link")) {
-      expect(link.getAttribute("href") ?? "").not.toMatch(/\.exe|\.msi|releases\/download/)
+    render(<DownloadPage release={WINDOWS_ONLY} />)
+    const link = await within(hero()).findByRole("link", { name: /Download for Windows/ })
+    expect(link.getAttribute("href")).toBe("/api/download?platform=windows")
+    expect(hero().textContent).toContain("Version 0.2.0 · Windows 10 or 11, 64-bit · 31 MB")
+    // Never the GitHub asset itself.
+    expect(document.body.innerHTML).not.toContain("releases/download")
+  })
+
+  it("lists every installer of the release with its checksum, and offers nothing for an OS without one", async () => {
+    asVisitor(UA.windows)
+    render(<DownloadPage release={WINDOWS_ONLY} />)
+    const windows = platformCard("Windows")
+    expect(within(windows).getByRole("link", { name: /Installer \(\.exe\)/ }).getAttribute("href")).toBe("/api/download?platform=windows")
+    expect(within(windows).getByRole("link", { name: /Windows Installer \(\.msi\)/ }).getAttribute("href")).toBe("/api/download?platform=windows&format=msi&arch=x64")
+    expect(windows.textContent).toContain(`SHA-256 ${SHA}`)
+    for (const name of ["macOS", "Linux"]) {
+      const card = platformCard(name)
+      expect(within(card).queryByRole("link")).toBeNull()
+      expect(card.textContent).toContain("Not available yet")
     }
+    // Install steps only for a platform that has a build.
+    const install = document.getElementById("install")!
+    expect(install.textContent).toContain("Windows")
+    expect(install.textContent).not.toMatch(/macOS|Linux/)
   })
 
-  it("says macOS is coming soon and Linux is not available", async () => {
+  it("never names a platform in the main button that has no installer", async () => {
     asVisitor(UA.mac)
-    const { unmount } = render(<DownloadPage />)
-    expect(await within(hero()).findByText("Hubble for macOS")).toBeTruthy()
-    expect(within(hero()).getByText("Coming soon")).toBeTruthy()
+    render(<DownloadPage release={WINDOWS_ONLY} />)
+    await waitFor(() => expect(within(hero()).getByRole("link", { name: /Download Hubble/ })).toBeTruthy())
+    expect(within(hero()).queryByRole("link", { name: /Download for macOS/ })).toBeNull()
+    expect(within(hero()).getByRole("link", { name: /Download Hubble/ }).getAttribute("href")).toBe("/download")
+  })
+
+  it("offers macOS and Linux visitors their own builds once the release has them", async () => {
+    asVisitor(UA.mac)
+    const { unmount } = render(<DownloadPage release={ALL} />)
+    expect((await within(hero()).findByRole("link", { name: /Download for macOS/ })).getAttribute("href")).toBe("/api/download?platform=macos")
     unmount()
-
     asVisitor(UA.linux)
-    render(<DownloadPage />)
-    expect(await within(hero()).findByText("Hubble for Linux")).toBeTruthy()
-    expect(within(hero()).getByText("Not available")).toBeTruthy()
+    render(<DownloadPage release={ALL} />)
+    expect((await within(hero()).findByRole("link", { name: /Download for Linux/ })).getAttribute("href")).toBe("/api/download?platform=linux")
+    expect(within(platformCard("Linux")).getByRole("link", { name: /Debian/ }).getAttribute("href")).toBe("/api/download?platform=linux&format=deb&arch=x64")
   })
 
-  it("lists every platform with its real status", async () => {
+  it("sends a phone to the full list rather than an installer", async () => {
+    asVisitor(UA.iphone)
+    render(<DownloadPage release={ALL} />)
+    await waitFor(() => expect(within(hero()).getByRole("link", { name: /Download Hubble/ }).getAttribute("href")).toBe("/download"))
+  })
+
+  it("says so when there is no release at all, and links to nothing", () => {
     asVisitor(UA.windows)
-    render(<DownloadPage />)
-    const list = await screen.findByRole("region", { name: "Platforms" })
-    expect(within(list).getByText("Windows").parentElement!.textContent).toMatch(/Not yet available/)
-    expect(within(list).getByText("macOS").parentElement!.textContent).toMatch(/Coming soon/)
-    expect(within(list).getByText("Linux").parentElement!.textContent).toMatch(/Not available/)
+    render(<DownloadPage release={null} />)
+    expect(hero().textContent).toContain("isn’t available to download yet")
+    expect(document.getElementById("release")).toBeNull()
+    expect(document.body.innerHTML).not.toContain("/api/download")
   })
 
-  it("asks an unknown platform to choose, under a neutral label", async () => {
-    asVisitor("")
-    render(<DownloadPage />)
-    expect(await within(hero()).findByText("Download Hubble Desktop")).toBeTruthy()
-    expect(within(hero()).getByText("Hubble Desktop is not publicly available yet.")).toBeTruthy()
+  it("shows the release notes as text, never as HTML, with a link to the release", () => {
+    render(<DownloadPage release={WINDOWS_ONLY} />)
+    const notes = document.getElementById("release")!
+    expect(notes.textContent).toContain("Hubble is a desktop app")
+    expect(notes.textContent).toContain("Pair Hubble for Chrome with it")
+    expect(notes.querySelector("script")).toBeNull()
+    expect(within(notes).getByRole("link", { name: /Release on GitHub/ }).getAttribute("href")).toBe(WINDOWS_ONLY.pageUrl)
   })
 
-  it("offers Hubble in the browser instead, recording the onboarding choice first", async () => {
-    asVisitor(UA.windows)
-    render(<DownloadPage />)
-    fireEvent.click(await within(hero()).findByRole("button", { name: /Use Hubble in your browser/ }))
-    expect(getOnboardingState().dismissed).toBe(true)
-    expect(push).toHaveBeenCalledWith("/")
-  })
-})
-
-describe("/download once a Windows installer is published", () => {
-  beforeEach(() => {
-    builds.current = { ...UNPUBLISHED, windows: { status: "published", version: "0.1.0", sha256: SHA } }
+  it("presents Hubble for Chrome as the companion, with how they connect", () => {
+    render(<DownloadPage release={WINDOWS_ONLY} />)
+    const chrome = document.getElementById("chrome")!
+    expect(chrome.textContent).toMatch(/companion extension/i)
+    expect(within(chrome).getByRole("link", { name: /Download Hubble for Chrome/ }).getAttribute("href")).toBe("/hubble-extension.zip")
+    expect(document.getElementById("how-they-connect")!.textContent).toMatch(/Nothing goes through a server/)
+    expect(screen.getByRole("link", { name: /Move your projects to Hubble Desktop/ }).getAttribute("href")).toBe("/move")
   })
 
-  it("offers Windows visitors the measured download link, with requirements and version", async () => {
-    asVisitor(UA.windows)
-    render(<DownloadPage />)
-    const button = await within(hero()).findByRole("link", { name: "Download Hubble for Windows" })
-    expect(button.getAttribute("href")).toBe(MEASURED)
-    expect(document.body.innerHTML).not.toMatch(/github\.com|releases\/download|localhost|_debug|\.exe/)
-    expect(within(hero()).getByText(/Windows 10 or 11, 64-bit · Version 0.1.0/)).toBeTruthy()
-  })
-
-  it("shows the next steps after the download starts", async () => {
-    asVisitor(UA.windows)
-    render(<DownloadPage />)
-    // jsdom cannot follow a link to another document; the click is what is under test.
-    document.addEventListener("click", (event) => event.preventDefault(), { once: true })
-    fireEvent.click(await within(hero()).findByRole("link", { name: "Download Hubble for Windows" }))
-    expect(within(hero()).getByRole("status").textContent).toMatch(/Your download has started/)
-    expect(screen.getByRole("heading", { name: "Next steps" })).toBeTruthy()
-    const steps = screen.getByRole("heading", { name: "Next steps" }).closest("section")!
-    expect(within(steps).getAllByRole("listitem").map((item) => item.textContent)).toEqual([
-      expect.stringContaining("Install Hubble"),
-      expect.stringContaining("Open Hubble"),
-      expect.stringContaining("Make a project"),
-      expect.stringContaining("Bring things in"),
-      expect.stringContaining("Reuse them"),
-    ])
-  })
-
-  it("still offers a Mac visitor no download, but lists the Windows build", async () => {
-    asVisitor(UA.mac)
-    render(<DownloadPage />)
-    expect(await within(hero()).findByText("Coming soon")).toBeTruthy()
-    expect(within(hero()).queryByRole("link", { name: /download/i })).toBeNull()
-    const list = screen.getByRole("region", { name: "Platforms" })
-    expect(within(list).getByRole("link", { name: /Download · Version 0.1.0/ }).getAttribute("href")).toBe(MEASURED)
-  })
-})
-
-describe("/download content", () => {
-  it("offers no agents, runtimes or sign-ins to AI apps", () => {
-    render(<DownloadPage />)
-    expect(document.body.textContent).not.toMatch(/\bagents?\b|runtime|Claude Code|Codex|Gemini CLI|Grok/i)
-  })
-
-  it("explains web vs desktop honestly, and does not imply projects carry over", () => {
-    render(<DownloadPage />)
-    // Saving from an AI app's page is Hubble for Chrome's, which reaches the desktop app while it is open.
-    expect(screen.getByText(/saves AI conversations to\s+it while it's open/)).toBeTruthy()
-    expect(screen.getByText(/keeps its own projects on your computer, separate from your browser/)).toBeTruthy()
-    expect(screen.getByText(/Nothing carries over from this website/)).toBeTruthy()
-    // The page collects nothing.
-    expect(screen.queryByRole("textbox")).toBeNull()
-    expect(document.querySelector("input, form")).toBeNull()
-  })
-
-  it("is Hubble, never TabDump, and makes no sandbox claim", () => {
-    render(<DownloadPage />)
-    expect(document.body.textContent).not.toMatch(/TabDump|Tab Dump|sandbox/i)
-    expect(screen.getAllByText("HUBBLE").length).toBeGreaterThan(0)
-  })
-
-  it("inside Hubble Desktop, says so instead of offering a download", async () => {
+  it("says the visitor already has Hubble inside the desktop app, and offers no download", () => {
     window.__TAURI_INTERNALS__ = {}
     try {
-      asVisitor(UA.windows)
-      render(<DownloadPage />)
-      await waitFor(() => expect(within(hero()).getByText(/You’re using Hubble Desktop/)).toBeTruthy())
-      expect(screen.queryByRole("region", { name: "Platforms" })).toBeNull()
-      expect(within(hero()).queryByRole("button")).toBeNull()
+      render(<DownloadPage release={ALL} />)
+      expect(screen.getByRole("status").textContent).toContain("You’re using Hubble Desktop")
+      expect(document.getElementById("platforms")).toBeNull()
     } finally {
       delete window.__TAURI_INTERNALS__
     }
   })
+})
 
-  it("points its section links back at the landing page", () => {
-    render(<DownloadPage />)
-    const footer = document.querySelector("footer")!
-    expect(within(footer).getByRole("link", { name: "Capture" }).getAttribute("href")).toBe("/welcome#capture")
-    // No link to itself in the footer's Resources.
-    expect(within(footer).queryByRole("link", { name: /Hubble Desktop|Download Hubble/ })?.getAttribute("href")).toBe("/download")
+describe("ReleaseNotes", () => {
+  it("renders headings, paragraphs and bullets as plain words", () => {
+    render(<ReleaseNotes notes={"# Title\n\nSome **bold** text.\n- one\n- `two`"} />)
+    expect(screen.getByText("Title")).toBeTruthy()
+    expect(screen.getByText("Some bold text.")).toBeTruthy()
+    expect(screen.getAllByRole("listitem").map((item) => item.textContent)).toEqual(["one", "two"])
   })
 })

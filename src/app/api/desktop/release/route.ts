@@ -1,23 +1,37 @@
-import { releaseManifest } from "@/lib/desktop/release";
+import { buildsFromRelease, releaseView } from "@/lib/desktop/artifacts";
+import { getLatestDesktopRelease } from "@/lib/desktop/release-source";
+
+export const revalidate = 600;
 
 /**
- * GET /api/desktop/release → which Hubble Desktop builds are published, as
- * of this deployment (src/lib/desktop/release.ts).
+ * GET /api/desktop/release → the latest published Hubble Desktop release.
  *
  * Read by an installed Hubble Desktop to check for a newer version
- * (src/lib/desktop/install.ts): the app's own copy of that table is frozen at
- * the version it shipped with. Public and cookie-free — it says only what the
- * /download page already says — hence `Access-Control-Allow-Origin: *`. It
- * names no URL: the app builds every link itself from the version.
+ * (src/lib/desktop/install.ts), and usable by anything else that wants to
+ * know what the download page offers. The answer follows the GitHub release
+ * itself (src/lib/desktop/release-source.ts), so publishing a release is
+ * enough for installed apps to hear of it.
+ *
+ * `builds` keeps the shape every shipped app parses (release.ts
+ * `parseReleaseManifest`); `release` adds the full list of installers for
+ * every OS. Neither names a URL: apps and pages build each link from the
+ * version and file name and check it. Public and cookie-free — it says only
+ * what /download already says — hence `Access-Control-Allow-Origin: *`.
  */
-export function GET(): Response {
-  return Response.json(releaseManifest(), {
-    headers: {
-      "access-control-allow-origin": "*",
-      // Changes only with a deploy, which purges the CDN; a few minutes of
-      // staleness in a browser cache is harmless.
-      "cache-control": "public, max-age=300, s-maxage=300",
-      "x-robots-tag": "noindex",
+export async function GET(): Promise<Response> {
+  const release = await getLatestDesktopRelease();
+  const view = releaseView(release);
+  return Response.json(
+    {
+      builds: buildsFromRelease(release),
+      release: view && { version: view.version, tag: view.tag, publishedAt: view.publishedAt, source: view.source, artifacts: view.artifacts },
     },
-  });
+    {
+      headers: {
+        "access-control-allow-origin": "*",
+        "cache-control": "public, max-age=300, s-maxage=600",
+        "x-robots-tag": "noindex",
+      },
+    }
+  );
 }

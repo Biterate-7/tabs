@@ -2,11 +2,11 @@
 
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react"
 import Link from "next/link"
-import { ArrowRight, Menu, Monitor, Moon, Sun, X } from "lucide-react"
+import { Menu, Monitor, Moon, Sun, X } from "lucide-react"
 import { BrandMark } from "@/components/brand-mark"
 import { buttonVariants } from "@/components/ui/button"
 import { useIsDesktop } from "@/hooks/use-is-desktop"
-import { DOWNLOAD_PATH, desktopLinkLabel } from "@/lib/desktop/release"
+import { DOWNLOAD_PATH } from "@/lib/desktop/release"
 import { cn } from "@/lib/utils"
 import { RevealSection, revealStep } from "./reveal"
 
@@ -34,10 +34,10 @@ export function Wordmark({ className }: { className?: string }) {
 }
 
 export const NAV_LINKS = [
-  { href: "#how-it-works", label: "How it works" },
-  { href: "#capture", label: "Capture" },
-  { href: "#find", label: "Find" },
-  { href: "#reuse", label: "Reuse" },
+  { href: "/#how-it-works", label: "How it works" },
+  { href: "/#desktop-and-chrome", label: "Desktop + Chrome" },
+  { href: "/#capture", label: "Features" },
+  { href: "/download", label: "Download" },
 ] as const
 
 export type PrimaryAction = { label: string; href?: string; onClick?: () => void }
@@ -66,36 +66,25 @@ export function ActionButton({
 }
 
 /**
- * The way to Hubble Desktop from the site's own pages, or `null` inside the
- * desktop app, where it would be offering the visitor what they already run.
+ * The way to the download page from the site's own pages, or `null` inside
+ * the desktop app, where it would be offering the visitor what they already run.
  */
 export function useDesktopLink(): { label: string; href: string } | null {
-  return useIsDesktop() ? null : { label: desktopLinkLabel(), href: DOWNLOAD_PATH }
+  return useIsDesktop() ? null : { label: "Download Hubble", href: DOWNLOAD_PATH }
 }
 
-export function SiteHeader({
-  install,
-  onOpenApp,
-  linkBase = "",
-  showDesktopLink = true,
-}: {
-  /** Hubble for Chrome — a store link, or the install guide. */
-  install: PrimaryAction
-  onOpenApp: () => void
-  /** Where the section anchors live, for a page other than the landing page ("/welcome"). */
-  linkBase?: string
-  /** False on the download page itself. */
-  showDesktopLink?: boolean
-}) {
+/** Hubble for Chrome, from any page: its store listing when there is one, else the download page's Chrome section. */
+export const CHROME_SECTION_HREF = `${DOWNLOAD_PATH}#chrome`
+
+export function SiteHeader({ install }: { /** Hubble for Chrome — a store link, or the download page's Chrome section. */ install: PrimaryAction }) {
   const [menuOpen, setMenuOpen] = useState(false)
-  const desktopLink = useDesktopLink()
-  const desktop = showDesktopLink ? desktopLink : null
+  const desktop = useDesktopLink()
 
   return (
     <header className="sticky top-0 z-(--hb-z-sticky) bg-background">
       <div className="m-page">
         <Container className="relative flex h-(--hb-header-h) items-center gap-4">
-          <Link href="/welcome" aria-label="Hubble home" className="shrink-0 rounded-xs outline-none focus-visible:ring-2 focus-visible:ring-ring">
+          <Link href="/" aria-label="Hubble home" className="shrink-0 rounded-xs outline-none focus-visible:ring-2 focus-visible:ring-ring">
             <Wordmark />
           </Link>
 
@@ -103,7 +92,7 @@ export function SiteHeader({
             {NAV_LINKS.map((link) => (
               <a
                 key={link.href}
-                href={`${linkBase}${link.href}`}
+                href={link.href}
                 className="m-small rounded-full px-[1.07em] py-[0.4em] text-foreground transition-opacity duration-(--duration-fast) hover:opacity-60"
               >
                 {link.label}
@@ -118,19 +107,11 @@ export function SiteHeader({
             >
               {install.label}
             </ActionButton>
-            {/* From 1360px only. Measured: below ~1320px the centred section
-                links leave no room for a third action and the two collide. */}
             {desktop && (
-              <Link
-                href={desktop.href}
-                className="m-small hidden rounded-full px-2 py-1 text-foreground transition-opacity duration-(--duration-fast) hover:opacity-60 min-[1360px]:inline"
-              >
-                {desktop.label}
+              <Link href={desktop.href} className={buttonVariants({ size: "nav" })}>
+                Download
               </Link>
             )}
-            <button type="button" onClick={onOpenApp} className={buttonVariants({ size: "nav" })}>
-              Open Hubble
-            </button>
             <button
               type="button"
               aria-label={menuOpen ? "Close menu" : "Open menu"}
@@ -149,7 +130,7 @@ export function SiteHeader({
           {NAV_LINKS.map((link) => (
             <a
               key={link.href}
-              href={`${linkBase}${link.href}`}
+              href={link.href}
               onClick={() => setMenuOpen(false)}
               className="m-body flex h-11 items-center border-b border-border text-foreground"
             >
@@ -160,49 +141,13 @@ export function SiteHeader({
             {install.label}
           </ActionButton>
           {desktop && (
-            <Link href={desktop.href} className="m-body flex h-11 w-full items-center border-b border-border text-foreground">
+            <Link href={desktop.href} className="m-body flex h-11 w-full items-center text-foreground">
               {desktop.label}
             </Link>
           )}
-          <button type="button" onClick={onOpenApp} className="m-body flex h-11 w-full items-center text-foreground">
-            Open Hubble
-          </button>
         </nav>
       )}
     </header>
-  )
-}
-
-/**
- * The hero's pair: ink pill into the app, tonal pill down the page — or, with
- * `secondary`, a tonal pill to another page of the site (the closing pair's
- * way to Hubble Desktop).
- */
-export function HeroActions({
-  onOpenApp,
-  exploreHref,
-  secondary,
-}: {
-  onOpenApp: () => void
-  exploreHref: string
-  secondary?: { label: string; href: string } | null
-}) {
-  return (
-    <div className="flex flex-wrap items-center gap-2.5">
-      <button type="button" onClick={onOpenApp} className={buttonVariants({ size: "hero" })}>
-        Get started
-        <ArrowRight aria-hidden />
-      </button>
-      {secondary ? (
-        <Link href={secondary.href} className={buttonVariants({ variant: "secondary", size: "hero" })}>
-          {secondary.label}
-        </Link>
-      ) : (
-        <a href={exploreHref} className={buttonVariants({ variant: "secondary", size: "hero" })}>
-          Explore Hubble
-        </a>
-      )}
-    </div>
   )
 }
 
@@ -370,17 +315,18 @@ const FOOTER_COLUMNS: { title: string; links: { label: string; href: string }[] 
   {
     title: "Product",
     links: [
-      { label: "How it works", href: "#how-it-works" },
-      { label: "Capture", href: "#capture" },
-      { label: "Find", href: "#find" },
-      { label: "Reuse", href: "#reuse" },
+      { label: "How it works", href: "/#how-it-works" },
+      { label: "Desktop + Chrome", href: "/#desktop-and-chrome" },
+      { label: "Hubble for Chrome", href: CHROME_SECTION_HREF },
+      { label: "Changelog", href: "/#changelog" },
     ],
   },
   {
     title: "Resources",
     links: [
-      { label: "Changelog", href: "#changelog" },
-      { label: "Open Hubble", href: "/" },
+      { label: "Release notes", href: "/download#release" },
+      { label: "Move from Hubble on the web", href: "/move" },
+      { label: "Your account", href: "/account" },
     ],
   },
   {
@@ -393,23 +339,11 @@ const FOOTER_COLUMNS: { title: string; links: { label: string; href: string }[] 
   },
 ]
 
-export function SiteFooter({
-  scheme,
-  onScheme,
-  linkBase = "",
-}: {
-  scheme: Scheme
-  onScheme: (scheme: Scheme) => void
-  /** Where the section anchors live, for a page other than the landing page ("/welcome"). */
-  linkBase?: string
-}) {
+export function SiteFooter({ scheme, onScheme }: { scheme: Scheme; onScheme: (scheme: Scheme) => void }) {
   const desktopLink = useDesktopLink()
   const columns = FOOTER_COLUMNS.map((column) => ({
     ...column,
-    links: [
-      ...column.links.map((link) => (link.href.startsWith("#") ? { ...link, href: `${linkBase}${link.href}` } : link)),
-      ...(column.title === "Resources" && desktopLink ? [desktopLink] : []),
-    ],
+    links: [...(column.title === "Resources" && desktopLink ? [desktopLink] : []), ...column.links],
   }))
   const options: { value: Scheme; label: string; icon: typeof Sun }[] = [
     { value: "system", label: "System", icon: Monitor },

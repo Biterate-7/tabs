@@ -1,20 +1,23 @@
 "use client"
 
 import type { ReactNode } from "react"
-import { Globe, Laptop, MessageSquareShare, MessagesSquare, Monitor, Search, ShieldCheck, Waypoints, Eye } from "lucide-react"
+import Link from "next/link"
+import { ArrowRight, Eye, Globe, Laptop, MessageSquareShare, MessagesSquare, Monitor, Search, ShieldCheck, Waypoints } from "lucide-react"
+import { buttonVariants } from "@/components/ui/button"
 import { ProviderMark } from "@/components/memory/provider-mark"
 import { getExtensionInstallInfo } from "@/lib/extension-config"
+import type { ReleaseView } from "@/lib/desktop/artifacts"
 import { AI_PROVIDERS, AI_PROVIDER_IDS } from "@/lib/providers/registry"
 import { AppThemeStyle } from "./app-theme"
 import { CaptureIllustration, KnowledgeIllustration, ReuseIllustration, SearchIllustration } from "./memory-illustrations"
 import { RevealSection, revealStep } from "./reveal"
-import { Container, FeatureSection, HeroActions, MoreLink, SiteFooter, SiteHeader, Stage, useDesktopLink, useMarketingScheme, type PrimaryAction } from "./site"
+import { BrowserDataNotice } from "./browser-data-notice"
+import { DownloadCta, ReleaseLine } from "./download-cta"
+import { CHROME_SECTION_HREF, Container, FeatureSection, MoreLink, SiteFooter, SiteHeader, Stage, useMarketingScheme, type PrimaryAction } from "./site"
 
-export type MarketingPageProps = {
-  /** Opens the in-page install guide when the extension is a download. */
-  onInstallExtension: () => void
-  /** Enters the app. */
-  onPasteTabs: () => void
+export type LaunchPageProps = {
+  /** The latest published Hubble Desktop release, or null when there is none to offer. */
+  release: ReleaseView | null
 }
 
 const ROOT_ID = "hubble-marketing"
@@ -27,45 +30,47 @@ const LOOP = [
 ] as const
 
 /**
- * Hubble's public page: one connected workspace for everything a person
- * learns and creates with AI.
+ * Hubble's launch site. Hubble is a desktop app; Hubble for Chrome is its
+ * companion; this page is where you get both.
  *
  * Nothing is claimed that the product does not do. The "works with" row reads
  * the provider registry, so it says exactly what Hubble can do with each AI
  * app; the illustrations run the product's own search and context code over
  * a fixed sample project and touch no one's data.
  */
-export function MarketingPage({ onInstallExtension, onPasteTabs }: MarketingPageProps) {
+export function LaunchPage({ release }: LaunchPageProps) {
   const install = getExtensionInstallInfo()
   const installAction: PrimaryAction =
-    install.mode === "store" ? { label: "Hubble for Chrome", href: install.url } : { label: "Hubble for Chrome", onClick: onInstallExtension }
+    install.mode === "store" ? { label: "Hubble for Chrome", href: install.url } : { label: "Hubble for Chrome", href: CHROME_SECTION_HREF }
   const [scheme, setScheme] = useMarketingScheme(ROOT_ID)
-  // Hubble Desktop, closing the page — absent inside the desktop app itself.
-  const desktopLink = useDesktopLink()
-  const extensionLink = installAction.href ? (
-    <MoreLink href={installAction.href} external>
+  const extensionLink = (
+    <MoreLink href={installAction.href} external={install.mode === "store"}>
       Get Hubble for Chrome
     </MoreLink>
-  ) : (
-    <MoreLink onClick={onInstallExtension}>Get Hubble for Chrome</MoreLink>
   )
 
   return (
     <div id={ROOT_ID} className="tabdump-marketing min-h-screen">
       <AppThemeStyle />
-      <SiteHeader install={installAction} onOpenApp={onPasteTabs} />
+      <SiteHeader install={installAction} />
+      <BrowserDataNotice />
 
       <main>
         {/* ---- Hero -------------------------------------------------------- */}
         <section className="m-page pt-12 pb-[calc(var(--hb-v)*2)] sm:pt-(--hb-hero-top)">
           <Container>
-            <h1 className="m-hero max-w-[680px] text-foreground">One connected workspace for everything you learn with AI.</h1>
+            <p className="m-small text-muted-foreground">Hubble Desktop</p>
+            <h1 className="m-hero mt-3 max-w-[680px] text-foreground">One connected workspace for everything you learn with AI.</h1>
             <p className="m-body mt-3 max-w-[620px] text-muted-foreground">
-              Save what you work out in ChatGPT, Claude, Gemini and Perplexity — with the pages and notes behind it. Find it later, and bring the right parts into your next AI chat, whichever app you use.
+              An app for your computer. Keep what you work out in ChatGPT, Claude, Gemini and Perplexity — with the pages and notes behind it — find it later, and bring the right parts into your next AI chat.
             </p>
-            <div className="mt-[22px]">
-              <HeroActions onOpenApp={onPasteTabs} exploreHref="#capture" />
+            <div className="mt-[22px] flex flex-wrap items-center gap-2.5">
+              <DownloadCta release={release} />
+              <a href="#desktop-and-chrome" className={buttonVariants({ variant: "secondary", size: "hero" })}>
+                How it works with Chrome
+              </a>
             </div>
+            <ReleaseLine release={release} className="mt-3" />
             <div className="mt-12 sm:mt-14">
               <Stage className="m-bleed">
                 <KnowledgeIllustration className="h-[440px] md:h-[480px]" />
@@ -93,6 +98,31 @@ export function MarketingPage({ onInstallExtension, onPasteTabs }: MarketingPage
                 </li>
               ))}
             </ol>
+          </Container>
+        </RevealSection>
+
+        {/* ---- Desktop + Chrome ------------------------------------------------ */}
+        <RevealSection id="desktop-and-chrome" className="m-page scroll-mt-(--hb-header-h) pb-[calc(var(--hb-v)*1.5)]">
+          <Container>
+            <h2 className="m-h2 m-reveal-item max-w-[810px] text-foreground" style={revealStep(0)}>
+              The app is Hubble. Chrome is how your browser reaches it.
+            </h2>
+            <p className="m-body m-reveal-item mt-3 max-w-[640px] text-muted-foreground" style={revealStep(1)}>
+              Hubble Desktop holds your projects and works on its own. Hubble for Chrome is a small companion: it saves the AI conversation or tabs you choose straight into the app on the same computer.
+            </p>
+            <ol className="m-reveal-item mt-8 grid gap-2.5 lg:grid-cols-3" style={revealStep(2)} aria-label="How Hubble for Chrome reaches Hubble Desktop">
+              {COMPANION.map(({ icon: Icon, title, body }) => (
+                <li key={title} className="m-card flex flex-col gap-2 px-[17.5px] pt-[15.9px] pb-5">
+                  <Icon aria-hidden className="size-4 text-muted-foreground" />
+                  <p className="m-body text-foreground">{title}</p>
+                  <p className="m-small text-muted-foreground">{body}</p>
+                </li>
+              ))}
+            </ol>
+            <div className="m-reveal-item mt-6 flex flex-wrap gap-x-6 gap-y-2" style={revealStep(3)}>
+              {extensionLink}
+              <MoreLink href="/download#how-they-connect">How they connect</MoreLink>
+            </div>
           </Container>
         </RevealSection>
 
@@ -145,7 +175,7 @@ export function MarketingPage({ onInstallExtension, onPasteTabs }: MarketingPage
             layout="wide"
             title="Start your next chat where you left off."
             body="Choose what to bring — a note, two conversations, a reading — and Hubble writes it up for any AI app: your notes, earlier AI answers and sources kept apart, each quoted with where it came from, and disagreements left visible. You see exactly what the AI receives, then copy it, or let Hubble for Chrome type it into the message box. It never sends anything for you."
-            link={<MoreLink onClick={onPasteTabs}>Open Hubble</MoreLink>}
+            link={<MoreLink href="/download">Download Hubble</MoreLink>}
             stage={
               <Stage>
                 <ReuseIllustration className="h-[480px]" />
@@ -193,11 +223,16 @@ export function MarketingPage({ onInstallExtension, onPasteTabs }: MarketingPage
         <RevealSection className="m-page pt-[var(--hb-section-y)] pb-[calc(var(--hb-section-y)*2)]">
           <Container className="flex flex-col items-center text-center">
             <h2 className="m-cta m-reveal-item text-foreground" style={revealStep(0)}>
-              Try Hubble now.
+              Get Hubble for your computer.
             </h2>
-            <div className="m-reveal-item mt-6" style={revealStep(1)}>
-              <HeroActions onOpenApp={onPasteTabs} exploreHref="#capture" secondary={desktopLink} />
+            <div className="m-reveal-item mt-6 flex flex-wrap justify-center gap-2.5" style={revealStep(1)}>
+              <DownloadCta release={release} />
+              <Link href="/download" className={buttonVariants({ variant: "secondary", size: "hero" })}>
+                All platforms
+                <ArrowRight aria-hidden />
+              </Link>
             </div>
+            <ReleaseLine release={release} className="m-reveal-item mt-3" />
           </Container>
         </RevealSection>
       </main>
@@ -215,14 +250,32 @@ const WORKS_WITH: { name: string; note: string; mark: ReactNode }[] = AI_PROVIDE
 })
 
 const TOOLS: { name: string; note: string; mark: ReactNode }[] = [
-  { name: "Chrome", note: "Hubble for Chrome", mark: <Globe className="size-4" aria-hidden /> },
-  { name: "Desktop", note: "Hubble Desktop", mark: <Monitor className="size-4" aria-hidden /> },
+  { name: "Desktop", note: "The Hubble app", mark: <Monitor className="size-4" aria-hidden /> },
+  { name: "Chrome", note: "Companion extension", mark: <Globe className="size-4" aria-hidden /> },
+]
+
+const COMPANION: { title: string; body: string; icon: typeof Laptop }[] = [
+  {
+    title: "Save in Chrome",
+    body: "On an AI app's page, or with tabs you want to keep, choose Save to Hubble in the extension.",
+    icon: Globe,
+  },
+  {
+    title: "Paired on this computer",
+    body: "The extension talks only to the Hubble app on the same computer, once you approve it in the app. Nothing passes through a server.",
+    icon: ShieldCheck,
+  },
+  {
+    title: "Kept until Hubble is open",
+    body: "If the app isn't running, the extension keeps what you saved and delivers it when Hubble starts.",
+    icon: Monitor,
+  },
 ]
 
 const PRINCIPLES: { title: string; body: string; icon: typeof Laptop }[] = [
   {
-    title: "Local first",
-    body: "Projects, conversations and notes live in your browser. Sign in only if you want projects synced between devices.",
+    title: "On your computer",
+    body: "Projects, conversations and notes are kept by the app on your computer and open without a network. Sign in only if you want projects synced between devices.",
     icon: Laptop,
   },
   {
@@ -239,6 +292,7 @@ const PRINCIPLES: { title: string; body: string; icon: typeof Laptop }[] = [
 
 // The project's own history, newest first.
 const CHANGELOG = [
+  { date: "Nov 19, 2026", title: "Hubble is a desktop app; Hubble for Chrome pairs with it and saves straight into it" },
   { date: "Oct 13, 2026", title: "Cross-AI memory: save conversations from ChatGPT, Claude, Gemini and Perplexity, search them, reuse them anywhere" },
   { date: "Oct 12, 2026", title: "ChatGPT, Claude and Gemini can read your projects through a connector" },
   { date: "Oct 6, 2026", title: "Projects: collect pages, PDFs and videos from Chrome" },

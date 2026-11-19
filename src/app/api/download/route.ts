@@ -1,6 +1,7 @@
 import "server-only";
 import { handleDownloadRequest } from "@/lib/downloads/endpoint";
 import { getDownloadCounter } from "@/lib/downloads/counter-server";
+import { getLatestDesktopRelease } from "@/lib/desktop/release-source";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -12,10 +13,10 @@ export const dynamic = "force-dynamic";
  * the request.
  */
 export function GET(request: Request): Promise<Response> {
-  return handleDownloadRequest(request, { counter: getDownloadCounter });
+  return handleDownloadRequest(request, { counter: getDownloadCounter, release: () => getLatestDesktopRelease() });
 }
 
 /** The same redirect for link checkers, counting nothing. */
 export function HEAD(request: Request): Promise<Response> {
-  return handleDownloadRequest(request, { counter: getDownloadCounter });
+  return handleDownloadRequest(request, { counter: getDownloadCounter, release: () => getLatestDesktopRelease() });
 }
