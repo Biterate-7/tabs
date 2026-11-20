@@ -127,7 +127,7 @@ afterEach(() => {
 });
 
 
-const LANDING_HEADING = "One connected workspace for everything you learn with AI.";
+const LANDING_HEADING = "Hubble is the control layer for your work with AI.";
 
 describe("AppShell first run", () => {
   it("greets a visitor who has never used Hubble with the public landing page", async () => {
@@ -153,6 +153,26 @@ describe("AppShell first run", () => {
 
     // Home, with the one thing to do first.
     expect(await screen.findByRole("heading", { name: "No projects yet" })).toBeTruthy();
+  });
+
+  it("opens Settings → AI connectors from the landing page's agents section", async () => {
+    window.localStorage.clear();
+    // The section asks the server for connections; signed out, it says so.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(JSON.stringify({ error: "unauthorized" }), { status: 401, headers: { "content-type": "application/json" } }))
+    );
+    try {
+      const user = userEvent.setup();
+      render(<AppShell />);
+      await user.click((await screen.findAllByRole("button", { name: /Set up AI connectors/ }))[0]);
+      expect(await screen.findByRole("heading", { name: "AI connectors" })).toBeTruthy();
+      expect(screen.queryByRole("heading", { level: 1, name: LANDING_HEADING })).toBeNull();
+      // Chosen once, the landing page stays out of the way from now on.
+      expect(window.localStorage.length).toBeGreaterThan(0);
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   it("sends a returning visitor straight to the app, landing page skipped", async () => {

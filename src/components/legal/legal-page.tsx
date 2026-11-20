@@ -30,7 +30,9 @@ export function LegalPage({
   children: ReactNode
 }) {
   return (
-    <main className="min-h-screen bg-background">
+    // In the site's own midnight scope (marketing.css), like every public
+    // page: the reader's app theme never recolours it, and links are white.
+    <main className="tabdump-marketing min-h-screen bg-background">
       {/* A reading page in the reference's documentation grammar: a 36px
           title in the display face, 16px body at a 680px measure, 18px
           section heads, links in the one chromatic colour. */}

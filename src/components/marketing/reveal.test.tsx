@@ -7,12 +7,13 @@ import { REVEAL_THRESHOLD } from "./reveal"
 
 /** Every section below the hero, by what it is about. */
 const SECTION_TEXT = [
-  "Capture → Connect → Find → Reuse.",
-  "Works beside the AI apps you already use",
-  "Save the conversation, not just the link.",
+  "Works with the AI apps you already use",
+  "Rebuild your context in one place.",
   "Find it, whichever AI said it.",
-  "Start your next chat where you left off.",
-  "Your knowledge, under your control.",
+  "Hand off with the full picture.",
+  "Agents act. You approve.",
+  "Your work stays on your device. Hubble runs the loop.",
+  "Everywhere you work",
   "Changelog",
   "Try Hubble now.",
 ]
@@ -89,7 +90,7 @@ describe("scroll reveal", () => {
     for (const text of SECTION_TEXT) {
       expect(revealing.some((section) => section.textContent?.includes(text)), text).toBe(true)
     }
-    for (const id of ["how-it-works", "capture", "find", "reuse", "changelog"]) {
+    for (const id of ["how-it-works", "capture", "find", "reuse", "agents", "everywhere", "changelog"]) {
       expect(document.getElementById(id)?.classList.contains("m-reveal"), id).toBe(true)
     }
     for (const section of revealing) {
@@ -106,7 +107,7 @@ describe("scroll reveal", () => {
     renderPage()
     const items = Array.from(document.getElementById("reuse")!.querySelectorAll<HTMLElement>(".m-reveal-item"))
     expect(items.map((item) => item.style.getPropertyValue("--m-reveal-step"))).toEqual(["0", "1", "2", "3"])
-    expect(items[0].textContent).toBe("Start your next chat where you left off.")
+    expect(items[0].textContent).toBe("Hand off with the full picture.")
     expect(items[3].querySelector(".m-stage")).not.toBeNull()
     // No link, so the window follows the body directly.
     const find = Array.from(document.getElementById("find")!.querySelectorAll<HTMLElement>(".m-reveal-item"))

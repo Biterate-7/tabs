@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect, useState, type CSSProperties } from "react"
 import { useRouter } from "next/navigation"
 import { ArrowRight, Download } from "lucide-react"
 import { buttonVariants } from "@/components/ui/button"
@@ -17,7 +17,7 @@ import {
 import { getExtensionInstallInfo } from "@/lib/extension-config"
 import { dismissOnboarding } from "@/lib/onboarding"
 import { cn } from "@/lib/utils"
-import { Container, MoreLink, SiteFooter, SiteHeader, useMarketingScheme, type PrimaryAction } from "./site"
+import { Container, MoreLink, SiteFooter, SiteHeader, type PrimaryAction } from "./site"
 
 const ROOT_ID = "hubble-download"
 const OSES: readonly DesktopOs[] = ["windows", "macos", "linux"]
@@ -46,7 +46,6 @@ const STEPS = [
 export function DownloadPage() {
   const router = useRouter()
   const install = getExtensionInstallInfo()
-  const [scheme, setScheme] = useMarketingScheme(ROOT_ID)
   const inDesktopApp = useIsDesktop()
   // Unknown on the server and during hydration; the browser's own answer after.
   const [visitor, setVisitor] = useState<VisitorOs>("unknown")
@@ -74,12 +73,16 @@ export function DownloadPage() {
         {/* ---- Hero -------------------------------------------------------- */}
         <section className="m-page pt-12 pb-[calc(var(--hb-v)*2)] sm:pt-(--hb-hero-top)">
           <Container className="flex flex-col items-center text-center">
-            <p className="m-small text-muted-foreground">Hubble Desktop</p>
-            <h1 className="m-hero mt-3 max-w-[720px] text-foreground">
-              Everything you learn with AI, in an app of its own.
+            <p className="m-small m-intro text-muted-foreground" style={{ "--m-step": 0 } as CSSProperties}>
+              Hubble Desktop
+            </p>
+            <h1 className="m-hero m-intro mt-4 max-w-[760px] text-foreground" style={{ "--m-step": 1 } as CSSProperties}>
+              Your AI workspace, in an app of its own.
             </h1>
-            <p className="m-body mt-4 max-w-[520px] text-muted-foreground">Your projects, conversations and notes, kept on your computer.</p>
-            <div className="mt-8 flex w-full flex-col items-center">
+            <p className="m-lede m-intro mt-5 max-w-[520px] text-muted-foreground" style={{ "--m-step": 2 } as CSSProperties}>
+              Your projects, conversations and notes, kept on your computer.
+            </p>
+            <div className="m-intro mt-8 flex w-full flex-col items-center" style={{ "--m-step": 3 } as CSSProperties}>
               {inDesktopApp ? (
                 <p role="status" className="m-body text-foreground">
                   You&rsquo;re using Hubble Desktop.
@@ -169,7 +172,7 @@ export function DownloadPage() {
         </section>
       </main>
 
-      <SiteFooter scheme={scheme} onScheme={setScheme} linkBase="/welcome" />
+      <SiteFooter onOpenApp={enterApp} install={installAction} linkBase="/welcome" />
     </div>
   )
 }

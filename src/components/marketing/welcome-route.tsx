@@ -53,6 +53,12 @@ export function WelcomeRoute() {
       // renders that as a real link instead.
       onInstallExtension={() => install.mode === "download" && setGuideOpen(true)}
       onPasteTabs={enterApp}
+      // Straight to Settings → AI connectors: AppShell honours this one
+      // `?settings=` value on mount (and removes it from the address).
+      onOpenConnectors={() => {
+        dismissOnboarding()
+        router.push("/?settings=ai-integrations")
+      }}
     />
   )
 }

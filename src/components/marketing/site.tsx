@@ -1,8 +1,8 @@
 "use client"
 
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react"
+import { useEffect, useState, type CSSProperties, type ReactNode } from "react"
 import Link from "next/link"
-import { ArrowRight, Menu, Monitor, Moon, Sun, X } from "lucide-react"
+import { ArrowDown, ArrowRight, Menu, X } from "lucide-react"
 import { BrandMark } from "@/components/brand-mark"
 import { buttonVariants } from "@/components/ui/button"
 import { useIsDesktop } from "@/hooks/use-is-desktop"
@@ -11,12 +11,13 @@ import { cn } from "@/lib/utils"
 import { RevealSection, revealStep } from "./reveal"
 
 /*
- * The landing page's frame: header, footer, containers, sections.
+ * The landing page's frame: header, footer, containers, feature cards.
  *
  * Geometry is the reference's, measured at 1440px: a 52px header on the page
  * ground with the mark at the container's left edge and the section links
- * centred; 27px pill actions on the right; a 1300px container with 20px
- * gutters; sections 67.2px apart; a footer on the card tone.
+ * centred; 27px pill actions on the right; a 1300px container; feature cards
+ * one step above the ground with the words set low in a 383px column beside
+ * a staged window; a footer on the card tone.
  */
 
 export function Container({ className, children }: { className?: string; children: ReactNode }) {
@@ -38,19 +39,16 @@ export const NAV_LINKS = [
   { href: "#capture", label: "Capture" },
   { href: "#find", label: "Find" },
   { href: "#reuse", label: "Reuse" },
+  { href: "#agents", label: "Agents" },
 ] as const
 
-export type PrimaryAction = { label: string; href?: string; onClick?: () => void }
+export type PrimaryAction = {
+  label: string
+  href?: string
+  onClick?: () => void
+}
 
-export function ActionButton({
-  action,
-  className,
-  children,
-}: {
-  action: PrimaryAction
-  className: string
-  children: ReactNode
-}) {
+export function ActionButton({ action, className, children }: { action: PrimaryAction; className: string; children: ReactNode }) {
   if (action.href) {
     return (
       <a href={action.href} target="_blank" rel="noopener noreferrer" className={className}>
@@ -91,111 +89,131 @@ export function SiteHeader({
   const desktopLink = useDesktopLink()
   const desktop = showDesktopLink ? desktopLink : null
 
-  return (
-    <header className="sticky top-0 z-(--hb-z-sticky) bg-background">
-      <div className="m-page">
-        <Container className="relative flex h-(--hb-header-h) items-center gap-4">
-          <Link href="/welcome" aria-label="Hubble home" className="shrink-0 rounded-xs outline-none focus-visible:ring-2 focus-visible:ring-ring">
-            <Wordmark />
-          </Link>
+  // The open menu covers the page: hold the page still under it, and let
+  // Escape close it.
+  useEffect(() => {
+    if (!menuOpen) return
+    const previous = document.documentElement.style.overflow
+    document.documentElement.style.overflow = "hidden"
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setMenuOpen(false)
+    }
+    window.addEventListener("keydown", onKey)
+    return () => {
+      document.documentElement.style.overflow = previous
+      window.removeEventListener("keydown", onKey)
+    }
+  }, [menuOpen])
 
-          <nav aria-label="Sections" className="absolute left-1/2 hidden -translate-x-1/2 items-center lg:flex">
-            {NAV_LINKS.map((link) => (
-              <a
-                key={link.href}
-                href={`${linkBase}${link.href}`}
-                className="m-small rounded-full px-[1.07em] py-[0.4em] text-foreground transition-opacity duration-(--duration-fast) hover:opacity-60"
+  const close = () => setMenuOpen(false)
+
+  // The menu is the header's sibling, not its child: the header's backdrop
+  // blur makes it the containing block for anything fixed inside it.
+  return (
+    <>
+      <header className="m-header sticky top-0 z-(--hb-z-sticky)">
+        <div className="m-page">
+          <Container className="relative flex h-(--hb-header-h) items-center gap-4">
+            <Link href="/welcome" aria-label="Hubble home" className="shrink-0 rounded-xs outline-none focus-visible:ring-2 focus-visible:ring-ring">
+              <Wordmark />
+            </Link>
+
+            <nav aria-label="Sections" className="absolute left-1/2 hidden -translate-x-1/2 items-center lg:flex">
+              {NAV_LINKS.map((link) => (
+                <a key={link.href} href={`${linkBase}${link.href}`} className="m-small m-quiet-link px-[15px] py-[5.6px]">
+                  {link.label}
+                </a>
+              ))}
+            </nav>
+
+            <div className="ml-auto flex items-center gap-2">
+              <ActionButton action={install} className="m-small m-quiet-link hidden px-1.5 py-1 md:inline">
+                {install.label}
+              </ActionButton>
+              {desktop && (
+                <Link href={desktop.href} className={cn(buttonVariants({ variant: "outline", size: "nav" }), "hidden sm:inline-flex")}>
+                  {desktop.label}
+                </Link>
+              )}
+              <button type="button" onClick={onOpenApp} className={buttonVariants({ size: "nav" })}>
+                Open Hubble
+              </button>
+              <button
+                type="button"
+                aria-label={menuOpen ? "Close menu" : "Open menu"}
+                aria-expanded={menuOpen}
+                aria-controls="site-menu"
+                onClick={() => setMenuOpen((open) => !open)}
+                className="-mr-1.5 flex size-9 items-center justify-center rounded-xs text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring lg:hidden"
               >
+                {menuOpen ? <X className="size-5" /> : <Menu className="size-5" />}
+              </button>
+            </div>
+          </Container>
+        </div>
+      </header>
+
+      <nav id="site-menu" aria-label="Menu" data-open={menuOpen} inert={!menuOpen} className="m-sheet m-page pt-6 pb-10 lg:hidden">
+        <ul className="flex flex-col">
+          {NAV_LINKS.map((link, index) => (
+            <li key={link.href} className="m-sheet-item" style={{ "--m-step": index } as CSSProperties}>
+              <a href={`${linkBase}${link.href}`} onClick={close} className="flex h-14 items-center text-[28px] tracking-[-0.025em] text-foreground">
                 {link.label}
               </a>
-            ))}
-          </nav>
-
-          <div className="ml-auto flex items-center gap-2">
-            <ActionButton
-              action={install}
-              className="m-small hidden rounded-full px-2 py-1 text-foreground transition-opacity duration-(--duration-fast) hover:opacity-60 sm:inline"
-            >
-              {install.label}
-            </ActionButton>
-            {/* From 1360px only. Measured: below ~1320px the centred section
-                links leave no room for a third action and the two collide. */}
-            {desktop && (
-              <Link
-                href={desktop.href}
-                className="m-small hidden rounded-full px-2 py-1 text-foreground transition-opacity duration-(--duration-fast) hover:opacity-60 min-[1360px]:inline"
-              >
-                {desktop.label}
-              </Link>
-            )}
-            <button type="button" onClick={onOpenApp} className={buttonVariants({ size: "nav" })}>
-              Open Hubble
-            </button>
-            <button
-              type="button"
-              aria-label={menuOpen ? "Close menu" : "Open menu"}
-              aria-expanded={menuOpen}
-              onClick={() => setMenuOpen((open) => !open)}
-              className="flex size-8 items-center justify-center rounded-xs text-foreground lg:hidden"
-            >
-              {menuOpen ? <X className="size-5" /> : <Menu className="size-5" />}
-            </button>
-          </div>
-        </Container>
-      </div>
-
-      {menuOpen && (
-        <nav aria-label="Menu" className="border-t border-border bg-background px-5 pt-2 pb-6 lg:hidden">
-          {NAV_LINKS.map((link) => (
-            <a
-              key={link.href}
-              href={`${linkBase}${link.href}`}
-              onClick={() => setMenuOpen(false)}
-              className="m-body flex h-11 items-center border-b border-border text-foreground"
-            >
-              {link.label}
-            </a>
+            </li>
           ))}
-          <ActionButton action={install} className="m-body flex h-11 w-full items-center border-b border-border text-foreground">
+        </ul>
+        <div className="m-sheet-item mt-8 flex flex-col gap-2.5" style={{ "--m-step": NAV_LINKS.length } as CSSProperties}>
+          <button
+            type="button"
+            onClick={() => {
+              close()
+              onOpenApp()
+            }}
+            className={cn(buttonVariants({ size: "hero" }), "w-full")}
+          >
+            Open Hubble
+          </button>
+          <ActionButton action={install} className={cn(buttonVariants({ variant: "secondary", size: "hero" }), "w-full")}>
             {install.label}
           </ActionButton>
           {desktop && (
-            <Link href={desktop.href} className="m-body flex h-11 w-full items-center border-b border-border text-foreground">
+            <Link href={desktop.href} onClick={close} className={cn(buttonVariants({ variant: "outline", size: "hero" }), "w-full")}>
               {desktop.label}
             </Link>
           )}
-          <button type="button" onClick={onOpenApp} className="m-body flex h-11 w-full items-center text-foreground">
-            Open Hubble
-          </button>
-        </nav>
-      )}
-    </header>
+        </div>
+      </nav>
+    </>
   )
 }
 
 /**
- * The hero's pair: ink pill into the app, tonal pill down the page — or, with
- * `secondary`, a tonal pill to another page of the site (the closing pair's
- * way to Hubble Desktop).
+ * The page's pair of pill actions: ink into the app, then a tonal pill — to
+ * another page of the site (`secondary`, the desktop download) or, without
+ * one, down the page.
  */
 export function HeroActions({
   onOpenApp,
   exploreHref,
   secondary,
+  className,
 }: {
   onOpenApp: () => void
   exploreHref: string
   secondary?: { label: string; href: string } | null
+  className?: string
 }) {
   return (
-    <div className="flex flex-wrap items-center gap-2.5">
-      <button type="button" onClick={onOpenApp} className={buttonVariants({ size: "hero" })}>
+    <div className={cn("flex flex-wrap items-center gap-2.5", className)}>
+      <button type="button" onClick={onOpenApp} className={cn(buttonVariants({ size: "hero" }), "m-arrow-host")}>
         Get started
-        <ArrowRight aria-hidden />
+        <ArrowRight aria-hidden className="m-arrow" />
       </button>
       {secondary ? (
         <Link href={secondary.href} className={buttonVariants({ variant: "secondary", size: "hero" })}>
           {secondary.label}
+          <ArrowDown aria-hidden />
         </Link>
       ) : (
         <a href={exploreHref} className={buttonVariants({ variant: "secondary", size: "hero" })}>
@@ -206,11 +224,14 @@ export function HeroActions({
   )
 }
 
-/** "Learn about … →", the page's only chromatic text. */
+/** "Learn about … →": white, with an arrow that leans forward on hover. */
 export function MoreLink({ href, onClick, external = false, children }: { href?: string; onClick?: () => void; external?: boolean; children: ReactNode }) {
   const inner = (
     <>
-      {children} <span aria-hidden>→</span>
+      {children}{" "}
+      <span aria-hidden className="m-arrow">
+        →
+      </span>
     </>
   )
   return href ? (
@@ -225,57 +246,11 @@ export function MoreLink({ href, onClick, external = false, children }: { href?:
 }
 
 /**
- * Mounts its children once they come near the viewport, holding their space
- * until then.
- *
- * The page has several live windows, each a whole Hubble; rendering them all
- * on first load would make the visitor pay for the ones they never scroll
- * to. The placeholder is the same size as the window, so nothing shifts when
- * it mounts.
- *
- * Where nearness cannot be observed (no IntersectionObserver), the windows
- * mount on the visitor's first scroll or interaction rather than all at
- * once on load — the page is first rendered as a browser would render it,
- * with only the hero live. (Mounting them eagerly here made the first-run
- * screen at `/` six times as heavy in jsdom, and slowed the app's own
- * extension-dump tests into timeouts.)
- */
-export function WhenNear({ className, children }: { className?: string; children: ReactNode }) {
-  const ref = useRef<HTMLDivElement>(null)
-  const [near, setNear] = useState(false)
-  useEffect(() => {
-    const element = ref.current
-    if (!element || near) return
-    if (typeof IntersectionObserver === "undefined") {
-      const events = ["scroll", "wheel", "touchstart", "keydown", "pointerdown"] as const
-      const mount = () => setNear(true)
-      for (const name of events) window.addEventListener(name, mount, { once: true, passive: true })
-      return () => {
-        for (const name of events) window.removeEventListener(name, mount)
-      }
-    }
-    const observer = new IntersectionObserver(
-      (entries) => {
-        if (entries.some((entry) => entry.isIntersecting)) setNear(true)
-      },
-      { rootMargin: "600px 0px" }
-    )
-    observer.observe(element)
-    return () => observer.disconnect()
-  }, [near])
-  return (
-    <div ref={ref} className={className}>
-      {near ? children : null}
-    </div>
-  )
-}
-
-/**
- * A feature section: two sentences and a link beside (or above) a live
- * Hubble window. `split` sets the text in a 383px column beside the window
- * from `xl`, where the window still has app-sized room; below that, and for
- * `wide` sections at every width, the text sits above a full-width window.
- * Title, body, link and window reveal in that order on first view.
+ * A feature card, as the reference sets them: the title in white and the
+ * rest of the sentence in grey at the same size, low in a 383px column,
+ * beside a window on its stage. From `xl` the two sit side by side
+ * (`reverse` puts the window first); below that the words sit above a
+ * full-width stage. Title, body, link and window reveal in that order.
  */
 export function FeatureSection({
   id,
@@ -283,7 +258,6 @@ export function FeatureSection({
   body,
   link,
   stage,
-  layout = "split",
   reverse = false,
 }: {
   id?: string
@@ -291,26 +265,32 @@ export function FeatureSection({
   body: ReactNode
   link?: ReactNode
   stage: ReactNode
-  layout?: "split" | "wide"
   reverse?: boolean
 }) {
-  const split = layout === "split"
   return (
-    <RevealSection id={id} className="m-page scroll-mt-(--hb-header-h) py-[calc(var(--hb-v)*2)]">
+    <RevealSection id={id} className="m-page scroll-mt-(--hb-header-h) py-[calc(var(--hb-v)*1.5)] sm:py-[calc(var(--hb-v)*2)]">
       <Container>
         <div
           className={cn(
-            "m-card m-bleed grid gap-6 p-3 sm:p-[17.5px]",
-            split && "xl:min-h-[715px] xl:grid-cols-[minmax(0,383px)_minmax(0,1fr)] xl:gap-[40px]",
-            split && reverse && "xl:grid-cols-[minmax(0,1fr)_minmax(0,383px)]"
+            "m-card m-bleed grid gap-6 p-3 sm:p-[18px]",
+            "xl:min-h-[720px] xl:grid-cols-[minmax(0,383px)_minmax(0,1fr)] xl:gap-[40px]",
+            reverse && "xl:grid-cols-[minmax(0,1fr)_minmax(0,383px)]",
           )}
         >
-          <div className={cn("flex flex-col justify-center px-[2.5px] pt-3", split ? "xl:py-0" : "max-w-[720px] sm:pt-4", split && reverse && "xl:order-2")}>
-            <h2 className="m-title m-reveal-item text-foreground" style={revealStep(0)}>{title}</h2>
-            <p className="m-title m-reveal-item text-muted-foreground" style={revealStep(1)}>{body}</p>
-            {link && <div className="m-reveal-item mt-5" style={revealStep(2)}>{link}</div>}
+          <div className={cn("flex flex-col justify-end px-2 pt-5 sm:px-[3px] xl:pt-0 xl:pb-[18px]", reverse && "xl:order-2")}>
+            <h2 className="m-title m-reveal-item m-reveal-text text-foreground" style={revealStep(0)}>
+              {title}
+            </h2>
+            <p className="m-title m-reveal-item m-reveal-text max-w-[620px] text-muted-foreground" style={revealStep(1)}>
+              {body}
+            </p>
+            {link && (
+              <div className="m-reveal-item mt-5" style={revealStep(2)}>
+                {link}
+              </div>
+            )}
           </div>
-          <div className={cn("m-reveal-item min-w-0", split && reverse && "xl:order-1")} style={revealStep(link ? 3 : 2)}>
+          <div className={cn("m-reveal-item min-w-0", reverse && "xl:order-1")} style={revealStep(link ? 3 : 2)}>
             {stage}
           </div>
         </div>
@@ -319,119 +299,91 @@ export function FeatureSection({
   )
 }
 
-/** The flat tonal plane a window rests on, with the window inset from its edges. */
+/** The plane a window rests on, with the window inset from its edges and drifting a little as the page scrolls. */
 export function Stage({ className, children }: { className?: string; children: ReactNode }) {
-  return <div className={cn("m-stage p-2 sm:p-6 lg:p-10", className)}>{children}</div>
+  return (
+    <div className={cn("m-stage m-settle px-2 py-6 sm:p-8 lg:p-12", className)}>
+      <div className="m-parallax">{children}</div>
+    </div>
+  )
 }
 
 // ------------------------------------------------------------------ Footer
 
-export type Scheme = "system" | "light" | "dark"
-const SCHEME_KEY = "tabdump:marketing-scheme:v1"
-
-/**
- * The page's colour scheme, as the reference offers it: system, light or
- * dark. Applied as `data-scheme` on the page root; "system" removes it so
- * the media query decides. A per-visitor convenience, so localStorage is the
- * right home and a failure to read it simply means "system".
- */
-export function useMarketingScheme(rootId: string): [Scheme, (scheme: Scheme) => void] {
-  const [scheme, setSchemeState] = useState<Scheme>("system")
-  useEffect(() => {
-    let stored: Scheme = "system"
-    try {
-      const raw = window.localStorage.getItem(SCHEME_KEY)
-      if (raw === "light" || raw === "dark") stored = raw
-    } catch {
-      // Private mode or blocked storage: follow the system.
-    }
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setSchemeState(stored)
-  }, [])
-  useEffect(() => {
-    const root = document.getElementById(rootId)
-    if (!root) return
-    if (scheme === "system") root.removeAttribute("data-scheme")
-    else root.setAttribute("data-scheme", scheme)
-  }, [rootId, scheme])
-  const setScheme = useCallback((next: Scheme) => {
-    setSchemeState(next)
-    try {
-      if (next === "system") window.localStorage.removeItem(SCHEME_KEY)
-      else window.localStorage.setItem(SCHEME_KEY, next)
-    } catch {
-      // Not persisted this time; the choice still applies to this visit.
-    }
-  }, [])
-  return [scheme, setScheme]
-}
-
-const FOOTER_COLUMNS: { title: string; links: { label: string; href: string }[] }[] = [
-  {
-    title: "Product",
-    links: [
-      { label: "How it works", href: "#how-it-works" },
-      { label: "Capture", href: "#capture" },
-      { label: "Find", href: "#find" },
-      { label: "Reuse", href: "#reuse" },
-    ],
-  },
-  {
-    title: "Resources",
-    links: [
-      { label: "Changelog", href: "#changelog" },
-      { label: "Open Hubble", href: "/" },
-    ],
-  },
-  {
-    title: "Legal",
-    links: [
-      { label: "Privacy Policy", href: "/privacy" },
-      { label: "Terms & Conditions", href: "/terms" },
-      { label: "Cookie Policy", href: "/cookies" },
-    ],
-  },
-]
-
 export function SiteFooter({
-  scheme,
-  onScheme,
+  onOpenApp,
+  install,
   linkBase = "",
 }: {
-  scheme: Scheme
-  onScheme: (scheme: Scheme) => void
+  onOpenApp: () => void
+  install: PrimaryAction
   /** Where the section anchors live, for a page other than the landing page ("/welcome"). */
   linkBase?: string
 }) {
   const desktopLink = useDesktopLink()
-  const columns = FOOTER_COLUMNS.map((column) => ({
-    ...column,
-    links: [
-      ...column.links.map((link) => (link.href.startsWith("#") ? { ...link, href: `${linkBase}${link.href}` } : link)),
-      ...(column.title === "Resources" && desktopLink ? [desktopLink] : []),
-    ],
-  }))
-  const options: { value: Scheme; label: string; icon: typeof Sun }[] = [
-    { value: "system", label: "System", icon: Monitor },
-    { value: "light", label: "Light", icon: Sun },
-    { value: "dark", label: "Dark", icon: Moon },
+  const columns: {
+    title: string
+    links: (PrimaryAction & { internal?: boolean })[]
+  }[] = [
+    {
+      title: "Product",
+      links: NAV_LINKS.map((link) => ({
+        label: link.label,
+        href: `${linkBase}${link.href}`,
+        internal: true,
+      })),
+    },
+    {
+      title: "Get Hubble",
+      links: [
+        { label: "Open Hubble", onClick: onOpenApp },
+        install,
+        ...(desktopLink
+          ? [
+              {
+                label: desktopLink.label,
+                href: desktopLink.href,
+                internal: true,
+              },
+            ]
+          : []),
+      ],
+    },
+    {
+      title: "Resources",
+      links: [{ label: "Changelog", href: `${linkBase}#changelog`, internal: true }],
+    },
+    {
+      title: "Legal",
+      links: [
+        { label: "Privacy Policy", href: "/privacy", internal: true },
+        { label: "Terms & Conditions", href: "/terms", internal: true },
+        { label: "Cookie Policy", href: "/cookies", internal: true },
+      ],
+    },
   ]
   return (
-    <footer className="m-page bg-card pt-[var(--hb-section-y)] pb-[30px]">
+    <footer className="m-page bg-card pt-[calc(var(--hb-section-y)*1.2)] pb-[30px]">
       <Container>
-        <div className="grid grid-cols-2 gap-y-10 sm:grid-cols-3 lg:grid-cols-5">
-          <div className="col-span-2 sm:col-span-3 lg:col-span-2">
+        <div className="grid grid-cols-2 gap-y-10 sm:grid-cols-4 lg:grid-cols-6">
+          <div className="col-span-2 sm:col-span-4 lg:col-span-2">
             <Wordmark />
           </div>
           {columns.map((column) => (
             <div key={column.title}>
-              <h2 className="m-small pb-[4.67px] text-muted-foreground">{column.title}</h2>
+              <h2 className="m-small pb-[4.67px] text-tertiary">{column.title}</h2>
               <ul>
                 {column.links.map((link) => (
                   <li key={link.label}>
-                    <Link href={link.href} className="m-small inline-block py-[4.67px] text-foreground transition-opacity duration-(--duration-fast) hover:opacity-60">
-                      {link.label}
-                    </Link>
+                    {link.internal && link.href ? (
+                      <Link href={link.href} className="m-small m-quiet-link inline-block py-[4.67px]">
+                        {link.label}
+                      </Link>
+                    ) : (
+                      <ActionButton action={link} className="m-small m-quiet-link inline-block py-[4.67px] text-left">
+                        {link.label}
+                      </ActionButton>
+                    )}
                   </li>
                 ))}
               </ul>
@@ -439,26 +391,9 @@ export function SiteFooter({
           ))}
         </div>
 
-        <div className="mt-24 flex flex-wrap items-center justify-between gap-4">
-          <p className="m-small text-muted-foreground">© 2026 Hubble · Your knowledge stays on your device.</p>
-          <div role="radiogroup" aria-label="Colour scheme" className="flex items-center gap-0.5 rounded-full bg-surface-active p-0.5">
-            {options.map((option) => (
-              <button
-                key={option.value}
-                type="button"
-                role="radio"
-                aria-checked={scheme === option.value}
-                aria-label={option.label}
-                onClick={() => onScheme(option.value)}
-                className={cn(
-                  "flex size-7 items-center justify-center rounded-full transition-colors duration-(--duration-fast)",
-                  scheme === option.value ? "bg-background text-foreground" : "text-muted-foreground hover:text-foreground"
-                )}
-              >
-                <option.icon className="size-3.5" aria-hidden />
-              </button>
-            ))}
-          </div>
+        <div className="mt-24 flex flex-wrap items-center justify-between gap-4 border-t border-subtle pt-6">
+          <p className="m-small text-tertiary">© 2026 Hubble</p>
+          <p className="m-small text-tertiary">Your work stays on your device.</p>
         </div>
       </Container>
     </footer>

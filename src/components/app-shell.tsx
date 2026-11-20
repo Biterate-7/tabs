@@ -1900,7 +1900,13 @@ export function AppShell() {
   if (!onboarded && !isDesktopShell && store.workspaces.every((w) => w.tabs.length === 0)) {
     return (
       <>
-        <FirstRunLanding onEnterApp={() => setOnboarded(true)} />
+        <FirstRunLanding
+          onEnterApp={() => setOnboarded(true)}
+          onOpenConnectors={() => {
+            setOnboarded(true)
+            openSettings("ai-integrations")
+          }}
+        />
         {/* Tabs sent from Chrome on a first launch still get their choice. */}
         {desktopImportDialog}
       </>

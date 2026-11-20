@@ -19,7 +19,7 @@ import { MarketingPage } from "./marketing-page"
  * arrives while the landing page is open fills the workspace, and AppShell
  * swaps to the real app on the next render without anything here noticing.
  */
-export function FirstRunLanding({ onEnterApp }: { onEnterApp: () => void }) {
+export function FirstRunLanding({ onEnterApp, onOpenConnectors }: { onEnterApp: () => void; onOpenConnectors?: () => void }) {
   const [guideOpen, setGuideOpen] = useState(false)
   const install = getExtensionInstallInfo()
 
@@ -56,6 +56,15 @@ export function FirstRunLanding({ onEnterApp }: { onEnterApp: () => void }) {
       // renders that as a real link instead. See getExtensionInstallInfo.
       onInstallExtension={() => install.mode === "download" && setGuideOpen(true)}
       onPasteTabs={skipOnboarding}
+      // Into the app at Settings → AI connectors, when the shell offers it.
+      onOpenConnectors={
+        onOpenConnectors
+          ? () => {
+              dismissOnboarding()
+              onOpenConnectors()
+            }
+          : undefined
+      }
     />
   )
 }
