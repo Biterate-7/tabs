@@ -154,10 +154,10 @@ function ScanLoading({ desktop }: { desktop: boolean }) {
   return (
     <div className="flex flex-1 flex-col items-center justify-center gap-3 px-6 text-center">
       <Loader2 className="size-6 animate-spin text-tertiary" aria-hidden />
-      <p className="text-body font-medium text-foreground">{desktop ? "Waiting for Chrome…" : "Scanning history…"}</p>
+      <p className="text-body font-medium text-foreground">{desktop ? "Asking Chrome…" : "Scanning history…"}</p>
       {desktop && (
         <p className="max-w-sm text-body-sm text-muted-foreground">
-          A Hubble page opened in your browser. Press Send there to share this range of your Chrome history with Hubble Desktop.
+          Hubble for Chrome reads this range of your history and hands it to Hubble Desktop. Nothing leaves this computer.
         </p>
       )}
     </div>
@@ -178,7 +178,9 @@ function ScanError({
   onChangeRange: () => void
 }) {
   const copy = desktop
-    ? { title: "Chrome didn't send your history.", description: message ?? "Try again, and press Send on the Hubble page in your browser." }
+    ? reason === "not-connected"
+      ? { title: "Hubble for Chrome didn't answer.", description: "Open Chrome, or connect Hubble for Chrome in Settings → Chrome extension, then try again." }
+      : { title: "Chrome didn't send your history.", description: message ?? "Try again." }
     : reason === "not-connected"
       ? {
           title: "Hubble extension not detected.",

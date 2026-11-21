@@ -69,7 +69,7 @@ function OpenTabsSession({
   // once; later store changes (a source finishing its reading) must not reset
   // the person's edits. The apply step re-checks against the live store.
   const [snapshot] = useState(() => ({ workspaces, subjects }))
-  // In Hubble Desktop the reading goes through the browser, where the person approves it (readChromeTabs).
+  // Hubble Desktop asks the paired Hubble for Chrome (readChromeTabs).
   const [status, setStatus] = useState<SmartOrganizeStatus>(() => ({ kind: "loading", message: readingChromeMessage(isDesktop()) }))
 
   useEffect(() => {

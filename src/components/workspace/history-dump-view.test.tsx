@@ -261,7 +261,7 @@ describe("HistoryDumpView — extension errors", () => {
 })
 
 describe("HistoryDumpView — Hubble Desktop", () => {
-  it("scans only when asked, says it is waiting for Chrome, and shows what Chrome said when it didn't send", async () => {
+  it("scans only when asked, says it is asking Chrome, and shows what Chrome said when it didn't send", async () => {
     ;(window as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {}
     try {
       let answer!: (value: unknown) => void
@@ -269,8 +269,8 @@ describe("HistoryDumpView — Hubble Desktop", () => {
       render(<HistoryDumpView tabs={[]} onClose={vi.fn()} onDump={vi.fn()} />)
       expect(fetchBrowserHistoryMock).not.toHaveBeenCalled()
       await userEvent.setup().click(screen.getByRole("button", { name: "Scan history" }))
-      expect(await screen.findByText("Waiting for Chrome…")).toBeTruthy()
-      expect(screen.getByText(/Press Send there to share this range/)).toBeTruthy()
+      expect(await screen.findByText("Asking Chrome…")).toBeTruthy()
+      expect(screen.getByText(/Hubble for Chrome reads this range of your history/)).toBeTruthy()
       answer({ ok: false, reason: "error", error: "Not sent from Chrome." })
       expect(await screen.findByText("Chrome didn't send your history.")).toBeTruthy()
       expect(screen.getByText("Not sent from Chrome.")).toBeTruthy()

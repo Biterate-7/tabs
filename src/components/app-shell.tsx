@@ -1021,9 +1021,9 @@ export function AppShell() {
   // Chrome → Hubble Desktop (handleDesktopImport below): tabs and conversations the extension sent straight to this app.
   const isDesktopShell = useIsDesktop()
   // Context intelligence (lib/intelligence): pulls detected activity from Hubble for Chrome and keeps the
-  // suggestions current. Web only — Hubble Desktop can't reach the extension.
+  // suggestions current. In Hubble Desktop it asks the paired extension (lib/browser/bridge.ts).
   const contextWorkspaces = useMemo(() => (store ? visibleSubjects(store, subjectsStarted) : []), [store, subjectsStarted])
-  useContextSync({ workspaces: contextWorkspaces, enabled: hydrated && store !== null && !isDesktopShell })
+  useContextSync({ workspaces: contextWorkspaces, enabled: hydrated && store !== null })
   const browserConnected = useBrowserConnected()
   const desktopImports = useDesktopImport(
     isDesktopShell ? desktopImport() : undefined,
@@ -1934,7 +1934,8 @@ export function AppShell() {
         onOpenSessions={openSessions}
         onUseInAi={(workspaceId) => openReuse({ workspaceId })}
         onShowInGraph={showInGraph}
-        {...(!isDesktopShell ? { context: { connected: browserConnected, onAccept: handleAcceptSuggestion, onOpenSettings: () => openSettings("context") } } : {})}
+        context={{ connected: browserConnected, onAccept: handleAcceptSuggestion, onOpenSettings: () => openSettings("context") }}
+        onConnectChrome={isDesktopShell ? () => openSettings("extension") : undefined}
       />
     )
   }
@@ -2284,7 +2285,7 @@ export function AppShell() {
             canDeleteSubject={store.workspaces.length > 1}
           >
             {/* Pages Hubble noticed that may belong here: the same stored suggestion Home shows. */}
-            {!isDesktopShell && <ProjectContextStrip workspace={currentWorkspace} projects={subjects} onAccept={handleAcceptSuggestion} />}
+            <ProjectContextStrip workspace={currentWorkspace} projects={subjects} onAccept={handleAcceptSuggestion} />
             {/* The older "paste every open tab, organize later" dump, one disclosure away. */}
             {projectHomeFor(currentWorkspace, <TabInput onDump={handleDump} />)}
           </ProjectPage>
@@ -2325,7 +2326,7 @@ export function AppShell() {
             recentlyAddedIds={recentlyAddedIds}
             onOpenSidebar={() => setMobileSidebarOpen(true)}
             {...(organizeOfferFor?.workspaceId === currentWorkspace.id ? { organizeOffer: organizeOfferFor.token } : {})}
-            {...(!isDesktopShell ? { contextStrip: <ProjectContextStrip workspace={currentWorkspace} projects={subjects} onAccept={handleAcceptSuggestion} /> } : {})}
+            contextStrip={<ProjectContextStrip workspace={currentWorkspace} projects={subjects} onAccept={handleAcceptSuggestion} />}
             onDismissOrganizeOffer={() => setOrganizeOfferFor(null)}
             onCreateSection={handleCreateSection}
             onRenameSection={handleRenameSection}

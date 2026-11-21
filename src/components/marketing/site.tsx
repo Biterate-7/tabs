@@ -6,6 +6,7 @@ import { Menu, Monitor, Moon, Sun, X } from "lucide-react"
 import { BrandMark } from "@/components/brand-mark"
 import { buttonVariants } from "@/components/ui/button"
 import { useIsDesktop } from "@/hooks/use-is-desktop"
+import { CONTACT_EMAIL } from "@/components/legal/legal-page"
 import { DOWNLOAD_PATH } from "@/lib/desktop/release"
 import { cn } from "@/lib/utils"
 import { RevealSection, revealStep } from "./reveal"
@@ -327,6 +328,7 @@ const FOOTER_COLUMNS: { title: string; links: { label: string; href: string }[] 
       { label: "Release notes", href: "/download#release" },
       { label: "Move from Hubble on the web", href: "/move" },
       { label: "Your account", href: "/account" },
+      { label: "Contact", href: `mailto:${CONTACT_EMAIL}` },
     ],
   },
   {

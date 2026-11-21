@@ -86,12 +86,14 @@ export function useSessionLaunch() {
 }
 
 /**
- * Where a launch's tabs go: a new Chrome window through Hubble for Chrome, or
- * — in Hubble Desktop, which can't ask the extension — the default browser
+ * Where a launch's tabs go: a new Chrome window through Hubble for Chrome — or,
+ * in Hubble Desktop with no Hubble for Chrome paired, the default browser
  * (src/lib/sessions/restore.ts).
  */
 export function useLaunchDestination(): string {
-  return useIsDesktop() ? "in your default browser" : "in a new Chrome window"
+  const desktop = useIsDesktop()
+  const connected = useBrowserConnected()
+  return desktop && !connected ? "in your default browser" : "in a new Chrome window"
 }
 
 /** "Open 32 tabs?" — shown by whichever surface started a large launch. */

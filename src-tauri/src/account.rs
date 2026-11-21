@@ -55,6 +55,11 @@ pub fn open_in_browser(app: &AppHandle, url: &tauri::Url) -> Result<(), String> 
     if cfg!(debug_assertions) && option_env!("HUBBLE_QA_ECHO_URLS").is_some() {
         eprintln!("[hubble-qa] open {url}");
     }
+    // QA rigs that drive their own Chrome (not the person's default browser) open the address themselves.
+    // Debug builds compiled with this variable only; a release build always opens.
+    if cfg!(debug_assertions) && option_env!("HUBBLE_QA_NO_OPEN").is_some() {
+        return Ok(());
+    }
     app.opener().open_url(url.to_string(), None::<&str>).map_err(|e| e.to_string())
 }
 

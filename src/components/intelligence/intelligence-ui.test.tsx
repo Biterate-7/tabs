@@ -194,11 +194,19 @@ describe("manual mode", () => {
   })
 
   it("keeps suggesting when detection is on", async () => {
-    bridge.settings = { ...bridge.settings, mode: "auto", decidedAt: NOW }
-    seed()
-    render(<Sync />)
-    await new Promise((resolve) => setTimeout(resolve, 1200))
-    expect(getContextSnapshot().suggestions.some((suggestion) => suggestion.status === "open")).toBe(true)
+    // The fixture's pages were seen around NOW; on the real clock they age out of retention (the test failed from
+    // late November 2026). Only Date is frozen, so the inference delay still runs on real timers.
+    vi.useFakeTimers({ toFake: ["Date"] })
+    vi.setSystemTime(NOW + 3_600_000)
+    try {
+      bridge.settings = { ...bridge.settings, mode: "auto", decidedAt: NOW }
+      seed()
+      render(<Sync />)
+      await new Promise((resolve) => setTimeout(resolve, 1200))
+      expect(getContextSnapshot().suggestions.some((suggestion) => suggestion.status === "open")).toBe(true)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })
 

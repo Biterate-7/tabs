@@ -300,8 +300,10 @@ left and nothing new is waiting.
   the `storage` event. Schema v1 is new: no previous data exists to migrate;
   unreadable data is kept aside once; data from a newer version is read-only.
 - **Not synced** between devices (the sync engine is workspace-scoped).
-  Desktop has no extension channel, so none of this appears there; Settings →
-  Context says "Chrome only".
+  Hubble Desktop reaches the extension over the paired link: settings and
+  activity are commands, a change is a nudge (`POST /v1/link/nudge`), and the
+  extension keys what it keeps for the app as `desktop:<sha256>` — the link,
+  held only by that app, vouches for the account it names (no `/api/auth/me`).
 - **Deleting**: Remove (one page) and Clear activity remove records,
   suggestions' mentions, associations and rejections here and in the
   extension. Projects, sources, notes and sessions are never touched

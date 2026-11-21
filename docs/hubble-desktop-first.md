@@ -10,7 +10,8 @@ still open. Details live in the linked docs.
  captures AI conversations, tabs   ──▶   loopback bridge 127.0.0.1:41517-41519
  popup: projects, search, context        ├─ /v1/sessions…  take-in only, person picks project
  durable capture queue                   ├─ /v1/pair, /v1/link/*  PAIRED (token + origin)
-                                         └─ /v1/relay/:id  answers to questions the app asked
+                                         ├─ /v1/link/commands, /result  the app asking Chrome (tabs, history, sessions, context)
+                                         └─ GET /v1/wake  opened in the browser to wake the extension
                                                │
                                                ▼
                                          webview: AppShell, local-first storage
@@ -22,7 +23,7 @@ still open. Details live in the linked docs.
  /download    every installer of the latest published GitHub release, notes, install steps
  /move        save the projects the retired web app left in this browser
  /account     sign in, disconnect a Hubble Desktop
- /desktop/connect, /desktop/relay, /oauth/*, /api/*   what the app and AI connectors need
+ /desktop/connect, /oauth/*, /api/*   what the app and AI connectors need
 ```
 
 ## 1. The website no longer runs the app
@@ -58,6 +59,16 @@ Two channels over the same loopback bridge (`src-tauri/src/import_bridge.rs`):
    `extension/src/desktop-link.js`): what used to need a Hubble tab — the
    popup's project list, saving into a chosen project, search, the context
    bundle for an AI chat, sessions, quick add.
+3. **Commands from Hubble** (same link, the other direction): Hubble Desktop
+   asks Chrome — the tabs open now, a history range, opening a saved session
+   in a Chrome window, context detection's settings and activity. Hubble
+   queues the command, the paired extension collects it (`POST
+   /v1/link/commands`), runs it through the same validator a page's command
+   passes, and answers (`POST /v1/link/result`). An asleep extension is woken by
+   Hubble opening `http://127.0.0.1:<port>/v1/wake`, only for something the
+   person just asked for. This replaced the website relay page, so the app no
+   longer needs the website to reach Chrome. Details: desktop-architecture.md,
+   "Asking Chrome: commands over the paired link".
 
 Pairing: the popup's **Connect to Hubble Desktop** → `POST /v1/pair` → both
 the popup and a "Connect Hubble for Chrome?" dialog show the same six-digit
@@ -114,9 +125,10 @@ all three platforms (`desktop-build.yml`) without publishing.
 - **Automatic updates.** Not implemented. Settings → Desktop app checks
   `/api/desktop/release` and links the newer installer. `tauri-plugin-updater`
   needs an update-signing key held as a CI secret.
-- **Context intelligence** (opt-in activity suggestions) still needs the page
-  bridge and is off in Hubble Desktop, as before this change. Carrying it over
-  needs an extension → desktop activity push over the paired link.
+- **Context intelligence** now runs in Hubble Desktop over the paired link
+  (2026-11-20): settings and activity are commands, "something changed" is a
+  nudge (`POST /v1/link/nudge`). It has unit coverage only; the real-Chrome
+  rig in docs/context-intelligence.md has not been re-run against the app.
 - **Chrome Web Store listing.** The extension is a ZIP download until
   `NEXT_PUBLIC_EXTENSION_STORE_URL` is set.
 - **The production origin moved.** The website is the Vercel project `hubble`

@@ -135,7 +135,7 @@ export function SessionsView({
         </div>
         <p className="mt-2 text-body text-muted-foreground">
           {isDesktop
-            ? "Save the tabs open in Chrome and reopen them together later, in your default browser. Hubble asks Chrome through your browser each time."
+            ? "Save the tabs open in Chrome and reopen them together later. Hubble asks Hubble for Chrome each time."
             : "Save the tabs you have open, close them, and reopen them together later. Kept in this browser."}
         </p>
 

@@ -50,7 +50,7 @@ describe("faviconSources", () => {
 
   it("asks only the deployed resolver from the desktop app, which has no API routes and a strict CSP", () => {
     expect(faviconSources("hubble-hq.vercel.app", "desktop")).toEqual({
-      service: "https://hubble-hq.vercel.app/api/favicon?host=hubble-hq.vercel.app",
+      service: "https://hubblehq.vercel.app/api/favicon?host=hubble-hq.vercel.app",
       direct: null,
     });
   });
@@ -187,8 +187,8 @@ describe("requestFavicon", () => {
     requestFavicon("walled.com");
     await settle();
     expect(net.fetched).toEqual([
-      "https://hubble-hq.vercel.app/api/favicon?host=github.com",
-      "https://hubble-hq.vercel.app/api/favicon?host=walled.com",
+      "https://hubblehq.vercel.app/api/favicon?host=github.com",
+      "https://hubblehq.vercel.app/api/favicon?host=walled.com",
     ]);
     expect(peekFaviconSrc("github.com")).toMatch(/^blob:/);
     expect(peekFaviconSrc("walled.com")).toBeNull();
