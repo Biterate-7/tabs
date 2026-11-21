@@ -77,19 +77,19 @@ describe("Add to Hubble Desktop", () => {
     expect(outcome).toMatchObject({ status: "done", added: 1 });
   });
 
-  it("with Hubble not installed: stops waiting and offers Hubble Web", async () => {
+  it("with Hubble not installed: stops waiting and offers to get Hubble Desktop", async () => {
     const hubble = desktop({ running: false });
     const { run, shown } = harness({ hubble, launchStarts: false });
     const outcome = await run({ scope: "current" });
     expect(outcome.reason).toBe("desktop-not-found");
-    expect(shown.at(-1)).toMatchObject({ title: "Hubble Desktop wasn't found", detail: "Open Hubble Web instead?", actions: ["web", "retry"] });
+    expect(shown.at(-1)).toMatchObject({ title: "Hubble Desktop wasn't found", detail: "Install Hubble Desktop, open it, then try again.", actions: ["web", "retry"] });
     expect(hubble.sent).toHaveLength(0);
   });
 
   it("with Hubble used before but not starting: says it isn't responding, with Retry", async () => {
     const { run, shown } = harness({ hubble: desktop({ running: false }), seen: true, launchStarts: false });
     await run({ scope: "current" });
-    expect(shown.at(-1)).toMatchObject({ title: "Hubble Desktop isn't responding", actions: ["retry", "web"] });
+    expect(shown.at(-1)).toMatchObject({ title: "Hubble Desktop isn't responding", actions: ["retry"] });
   });
 
   it("retrying after Hubble has started works", async () => {
@@ -134,7 +134,7 @@ describe("Add to Hubble Desktop", () => {
     const { run, shown } = harness({ hubble });
     const outcome = await run({ scope: "current" });
     expect(outcome.reason).toBe("desktop-not-responding");
-    expect(shown.at(-1).actions).toEqual(["retry", "web"]);
+    expect(shown.at(-1).actions).toEqual(["retry"]);
   });
 
   it("runs one add at a time", async () => {

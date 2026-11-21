@@ -134,6 +134,45 @@ export const desktopChromeRelay = {
   },
 };
 
+/** A pairing request from Hubble for Chrome, waiting for the person (src-tauri/src/extension_link.rs). */
+export type DesktopPairingRequest = { id: string; code: string; label: string; extensionId: string; expiresInMs: number };
+/** A paired Hubble for Chrome install, as Settings lists it. */
+export type DesktopExtensionLink = { id: string; label: string; extensionId: string; createdAt: number; lastUsedAt: number | null };
+
+/**
+ * Hubble for Chrome ⇄ Hubble Desktop, paired (src-tauri/src/extension_link.rs):
+ * the pairing dialog's requests and answers, Settings' list of paired
+ * installs, and the extension's requests for the webview to answer.
+ */
+export const desktopExtensionLink = {
+  pendingPairings(): Promise<DesktopPairingRequest[]> {
+    return invokeCommand<DesktopPairingRequest[]>("desktop_pair_pending", {});
+  },
+  answerPairing(id: string, approve: boolean): Promise<void> {
+    return invokeCommand<void>("desktop_pair_answer", { id, approve });
+  },
+  list(): Promise<DesktopExtensionLink[]> {
+    return invokeCommand<DesktopExtensionLink[]>("desktop_link_list", {});
+  },
+  revoke(id: string): Promise<boolean> {
+    return invokeCommand<boolean>("desktop_link_revoke", { id });
+  },
+  take(): Promise<unknown[]> {
+    return invokeCommand<unknown[]>("desktop_link_take", {});
+  },
+  answer(requestId: string, answer: { ok: true; result: unknown } | { ok: false; error: string }): Promise<void> {
+    return invokeCommand<void>("desktop_link_answer", { requestId, answer });
+  },
+  async onPairRequested(handler: () => void): Promise<() => void> {
+    const { listen } = await import("@tauri-apps/api/event");
+    return listen("hubble-link:pair-requested", () => handler());
+  },
+  async onRequest(handler: () => void): Promise<() => void> {
+    const { listen } = await import("@tauri-apps/api/event");
+    return listen("hubble-link:request", () => handler());
+  },
+};
+
 export const desktopPlatform: PlatformAdapter = {
   kind: "desktop",
 

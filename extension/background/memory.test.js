@@ -6,6 +6,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MSG_CAPTURE_CONVERSATION, MSG_INSERT_CONTEXT, MSG_MEMORY_REQUEST, MSG_PAGE_REQUEST, TABDUMP_ORIGIN } from "../src/config.js";
 import { insertIntoComposer, readConversationFromPage } from "../src/ai-pages.js";
+import { LINK_KEY } from "../src/desktop-link.js";
+import { pairedDesktopFetch, pairedStorage } from "../test-support/paired-desktop.js";
 
 const EXTENSION_ID = "hubble-extension";
 const POPUP = { id: EXTENSION_ID };
@@ -13,6 +15,8 @@ const CHAT_URL = "https://claude.ai/chat/0b6f6d3e-aaaa-bbbb";
 
 let listeners;
 let pageRequests;
+// chrome.storage.local: paired with Hubble Desktop unless a test says otherwise.
+let local;
 // Save asks Hubble Desktop first, over loopback: never the real network here.
 const realFetch = globalThis.fetch;
 let bridgeRequests;
@@ -42,9 +46,9 @@ beforeEach(() => {
   listeners = [];
   pageRequests = [];
   bridgeRequests = [];
-  globalThis.fetch = vi.fn(async () => {
-    throw new TypeError("Failed to fetch");
-  });
+  local = pairedStorage();
+  // Hubble is a desktop app: a paired Hubble Desktop answers what the Hubble page used to (the harness's page mock).
+  globalThis.fetch = pairedDesktopFetch();
   globalThis.chrome = {
     runtime: { id: EXTENSION_ID, onMessage: { addListener: vi.fn((fn) => listeners.push(fn)) } },
     tabs: {
@@ -68,7 +72,16 @@ beforeEach(() => {
       }),
     },
     windows: { update: vi.fn() },
-    storage: { session: { set: vi.fn(async () => {}), get: vi.fn(async () => ({})) } },
+    storage: {
+      session: { set: vi.fn(async () => {}), get: vi.fn(async () => ({})) },
+      local: {
+        get: vi.fn(async (key) => (typeof key === "string" ? (key in local ? { [key]: local[key] } : {}) : { ...local })),
+        set: vi.fn(async (values) => Object.assign(local, values)),
+        remove: vi.fn(async (key) => {
+          delete local[key];
+        }),
+      },
+    },
   };
 });
 
@@ -87,8 +100,9 @@ async function ask(message, sender = POPUP) {
   });
 }
 
-describe("Save to Hubble with Hubble Desktop open", () => {
-  it("sends the conversation to Hubble Desktop, not the Hubble page, and says where the person put it", async () => {
+describe("Save to Hubble before this extension is connected to Hubble Desktop", () => {
+  it("sends the conversation to Hubble Desktop's window, which asks for the project, and says where the person put it", async () => {
+    delete local[LINK_KEY];
     openHubbleDesktop();
     const answer = await ask({ type: MSG_CAPTURE_CONVERSATION, payload: { tabId: 7, workspaceId: "ws-history" } });
     expect(answer).toEqual({ ok: true, result: { outcome: "added", turns: 2, truncated: false, project: "Biology", desktop: true } });
@@ -102,21 +116,31 @@ describe("Save to Hubble with Hubble Desktop open", () => {
     });
   });
 
-  it("needs no project chosen in the popup, but Hubble on the web does", async () => {
+  it("needs no project chosen in the popup; with Hubble Desktop closed it asks to connect, and saves nothing elsewhere", async () => {
+    delete local[LINK_KEY];
     openHubbleDesktop();
     expect(await ask({ type: MSG_CAPTURE_CONVERSATION, payload: { tabId: 7 } })).toMatchObject({ ok: true, result: { desktop: true } });
     globalThis.fetch = vi.fn(async () => {
       throw new TypeError("Failed to fetch");
     });
-    expect(await ask({ type: MSG_CAPTURE_CONVERSATION, payload: { tabId: 7 } })).toEqual({ ok: false, error: "no-project" });
+    expect(await ask({ type: MSG_CAPTURE_CONVERSATION, payload: { tabId: 7 } })).toEqual({ ok: false, error: "not-paired" });
     expect(pageRequests).toEqual([]);
+    expect(chrome.tabs.create).not.toHaveBeenCalled();
+  });
+
+  it("once connected, saves straight into the project chosen in the popup; with none chosen, Hubble's window asks", async () => {
+    expect(await ask({ type: MSG_CAPTURE_CONVERSATION, payload: { tabId: 7, workspaceId: "ws-history" } })).toMatchObject({ ok: true, result: { outcome: "added" } });
+    // Through the paired link, never Hubble Desktop's choose-a-project window.
+    expect(globalThis.fetch.requests).toEqual([expect.objectContaining({ kind: "capture", args: expect.objectContaining({ workspaceId: "ws-history" }) })]);
+    openHubbleDesktop();
+    expect(await ask({ type: MSG_CAPTURE_CONVERSATION, payload: { tabId: 7 } })).toMatchObject({ ok: true, result: { desktop: true, project: "Biology" } });
   });
 });
 
 describe("Save to Hubble", () => {
   it("reads only the conversation tab it was given, then hands it to the Hubble page with Chrome's own address", async () => {
     const answer = await ask({ type: MSG_CAPTURE_CONVERSATION, payload: { tabId: 7, workspaceId: "ws-history" } });
-    expect(answer).toMatchObject({ ok: true, result: { outcome: "added", turns: 2 }, hubbleTabId: 42 });
+    expect(answer).toMatchObject({ ok: true, result: { outcome: "added", turns: 2 } });
     expect(chrome.scripting.executeScript).toHaveBeenCalledTimes(1);
     expect(chrome.scripting.executeScript).toHaveBeenCalledWith({ target: { tabId: 7 }, func: expect.objectContaining({ name: readConversationFromPage.name }) });
     expect(pageRequests).toEqual([

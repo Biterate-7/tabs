@@ -5,9 +5,9 @@
 // `hubble-extension/manifest.json` layout — not a doubly-nested
 // `hubble-extension/extension/manifest.json` the user would have to hunt
 // for. See build-extension-zip.mjs's header comment for the full rationale.
-import { afterAll, afterEach, describe, expect, it, beforeAll, vi } from "vitest";
+import { describe, expect, it, beforeAll } from "vitest";
 import { execFileSync } from "node:child_process";
-import { readFileSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { readFileSync, existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { CANONICAL_PRODUCTION_ORIGIN, DEV_ORIGIN } from "./build-extension-zip.mjs";
@@ -139,8 +139,12 @@ describe("build-extension-zip.mjs", () => {
         "src/browser-actions.js",
         "src/browser-commands.js",
         "src/quick-add.js",
+        "src/desktop.js",
+        "src/desktop-link.js",
       ])
     );
+    // The tests' fakes never ship.
+    expect(names.some((name) => name.startsWith("test-support/"))).toBe(false);
   });
 
   it("excludes test files, the packaging README, and the icon-generation script", () => {
@@ -250,7 +254,7 @@ describe("build-extension-zip.mjs", () => {
 // TABDUMP_ORIGIN), so the origin baked in here IS where "Dump Tabs" goes.
 describe("build-extension-zip.mjs — canonical production origin", () => {
   it("is the Vercel project's production domain, not a dead or foreign one", () => {
-    expect(CANONICAL_PRODUCTION_ORIGIN).toBe("https://hubble-hq.vercel.app");
+    expect(CANONICAL_PRODUCTION_ORIGIN).toBe("https://hubblehq.vercel.app");
     for (const dead of DEAD_ORIGINS) expect(CANONICAL_PRODUCTION_ORIGIN).not.toBe(dead);
   });
 });
@@ -353,138 +357,3 @@ describe("build-extension-zip.mjs — default build output (no environment confi
   });
 });
 
-// The packaged extension itself, end to end: build the ZIP exactly as a Vercel
-// production deploy does, extract it, load *its* background.js (with *its*
-// baked config.js) and run a real "Dump Tabs". Only chrome.* is faked. This is
-// the path that produced the 404: with a dead origin baked in, the url-filtered
-// query never found the user's Hubble tab and the fallback chrome.tabs.create
-// opened DEPLOYMENT_NOT_FOUND instead.
-describe("packaged extension — Dump Tabs against the production origin", () => {
-  // What Vercel actually sets VERCEL_PROJECT_PRODUCTION_URL to for this project.
-  const PRODUCTION_DOMAIN = "hubble-hq.vercel.app";
-  const ORIGIN = `https://${PRODUCTION_DOMAIN}`;
-  let extractDir;
-  let listeners;
-
-  function fakeTab(over) {
-    return { id: 1, windowId: 10, url: "https://example.com", title: "Example", pinned: false, active: false, index: 0, ...over };
-  }
-
-  beforeAll(() => {
-    const entries = buildWith({
-      VERCEL_ENV: "production",
-      VERCEL_URL: "tabs-gtxma8nys-ayaan-viswanathans-projects.vercel.app",
-      VERCEL_PROJECT_PRODUCTION_URL: PRODUCTION_DOMAIN,
-    });
-    // Inside the project (gitignored node_modules/.cache), because Vite will
-    // not load modules from outside its root (e.g. the OS temp directory).
-    const cacheDir = path.join(REPO_ROOT, "node_modules", ".cache");
-    mkdirSync(cacheDir, { recursive: true });
-    extractDir = mkdtempSync(path.join(cacheDir, "hubble-packaged-extension-"));
-    for (const { name, data } of entries) {
-      const target = path.join(extractDir, ...name.split("/"));
-      mkdirSync(path.dirname(target), { recursive: true });
-      writeFileSync(target, data);
-    }
-  });
-
-  afterAll(() => {
-    if (extractDir) rmSync(extractDir, { recursive: true, force: true });
-  });
-
-  afterEach(() => {
-    delete globalThis.chrome;
-    vi.resetModules();
-  });
-
-  async function loadPackagedBackground({ openTabs }) {
-    listeners = [];
-    globalThis.chrome = {
-      runtime: { onMessage: { addListener: vi.fn((fn) => listeners.push(fn)) } },
-      tabs: {
-        query: vi.fn(async (query) => {
-          if (query.windowId !== undefined) return openTabs.filter((tab) => tab.windowId === query.windowId);
-          if (query.url) {
-            // Chrome's own match-pattern semantics for "<origin>/*".
-            const prefix = query.url.slice(0, -1);
-            return openTabs.filter((tab) => tab.url.startsWith(prefix));
-          }
-          return [];
-        }),
-        create: vi.fn(async ({ url }) => fakeTab({ id: 99, url })),
-        update: vi.fn(),
-        // The packaged content script answering for the page: it acks the batch.
-        sendMessage: vi.fn(async (_tabId, message) =>
-          message?.type === "TABDUMP_IMPORT" ? { ok: true, accepted: message.payload.tabs.length } : undefined
-        ),
-        get: vi.fn(async (id) => fakeTab({ id, status: "loading" })),
-        onUpdated: { addListener: vi.fn(), removeListener: vi.fn() },
-        onRemoved: { addListener: vi.fn(), removeListener: vi.fn() },
-      },
-      scripting: { executeScript: vi.fn().mockResolvedValue([{ result: null }]) },
-      windows: { update: vi.fn() },
-      storage: { session: { set: vi.fn(async () => {}), get: vi.fn(async () => ({})) } },
-    };
-    // Forward slashes: Vite resolves "C:/…" but not "C:\…".
-    await import(/* @vite-ignore */ path.join(extractDir, "background", "background.js").split(path.sep).join("/"));
-    // Context detection registers its own onUpdated listener at load; the dump waits for the one registered after.
-    chrome.tabs.onUpdated.addListener.mockClear();
-    return listeners[0];
-  }
-
-  function dump(listener, payload) {
-    return new Promise((resolve) => listener({ type: "DUMP_TABS", payload }, {}, resolve));
-  }
-
-  it("sends the tabs to the Hubble tab the user already has open, without opening a new one", async () => {
-    const openTabs = [
-      fakeTab({ id: 1, url: "https://a.example/one", title: "One" }),
-      fakeTab({ id: 2, url: "https://b.example/two", title: "Two" }),
-      // Hubble open in another window: found by origin, not by window.
-      fakeTab({ id: 42, windowId: 20, url: `${ORIGIN}/`, title: "Hubble", active: true }),
-    ];
-    const listener = await loadPackagedBackground({ openTabs });
-
-    const response = await dump(listener, { windowId: 10, excludeUrls: [] });
-
-    expect(chrome.tabs.query).toHaveBeenCalledWith({ url: `${ORIGIN}/*` });
-    expect(chrome.tabs.create).not.toHaveBeenCalled();
-    const delivered = chrome.tabs.sendMessage.mock.calls.find(([, m]) => m?.type === "TABDUMP_IMPORT");
-    expect(delivered[0]).toBe(42);
-    expect(delivered[1].payload.tabs.map((t) => t.url)).toEqual(["https://a.example/one", "https://b.example/two"]);
-    expect(response).toMatchObject({ ok: true, status: "done", accepted: 2, focusTabId: 42 });
-  });
-
-  it("opens Hubble's app route on the production origin — never a dead or deployment URL — when no Hubble tab is open", async () => {
-    const listener = await loadPackagedBackground({ openTabs: [fakeTab({ id: 1, url: "https://a.example/one" })] });
-
-    const responsePromise = dump(listener, { windowId: 10, excludeUrls: [] });
-    await vi.waitFor(() => expect(chrome.tabs.onUpdated.addListener).toHaveBeenCalled());
-    chrome.tabs.onUpdated.addListener.mock.calls.at(-1)[0](99, { status: "complete" });
-    const response = await responsePromise;
-
-    expect(chrome.tabs.create).toHaveBeenCalledTimes(1);
-    const [{ url, active }] = chrome.tabs.create.mock.calls[0];
-    expect(url).toBe(ORIGIN);
-    expect(new URL(url).pathname).toBe("/"); // TABDUMP_APP_PATH, the route that mounts AppShell
-    expect(active).toBe(false);
-    for (const dead of DEAD_ORIGINS) expect(url.startsWith(dead)).toBe(false);
-    expect(url).not.toContain("gtxma8nys");
-    expect(response).toMatchObject({ ok: true, status: "done", accepted: 1, focusTabId: 99 });
-  });
-
-  it("skips tabs already in the workspace, exactly as the unpacked extension does", async () => {
-    const openTabs = [
-      fakeTab({ id: 1, url: "https://a.example/one" }),
-      fakeTab({ id: 2, url: "https://b.example/two" }),
-      fakeTab({ id: 42, windowId: 20, url: `${ORIGIN}/`, active: true }),
-    ];
-    const listener = await loadPackagedBackground({ openTabs });
-
-    const response = await dump(listener, { windowId: 10, excludeUrls: ["https://a.example/one"] });
-
-    const delivered = chrome.tabs.sendMessage.mock.calls.find(([, m]) => m?.type === "TABDUMP_IMPORT");
-    expect(delivered[1].payload.tabs.map((t) => t.url)).toEqual(["https://b.example/two"]);
-    expect(response).toMatchObject({ ok: true, skippedAlreadyImported: 1, accepted: 1 });
-  });
-});

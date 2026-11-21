@@ -264,10 +264,10 @@ describe("what the person is told", () => {
     expect(describeDesktopResult({ status: "done", project: "Research", added: 200, duplicates: 0, failed: 0, overLimit: 15 })).toMatchObject({ title: "200 of 215 added to Research" });
   });
 
-  it("offers Hubble Web when Hubble Desktop can't be reached, and never fails silently", () => {
-    expect(describeDesktopResult({ reason: "desktop-not-found" })).toEqual({ tone: "error", title: "Hubble Desktop wasn't found", detail: "Open Hubble Web instead?", actions: ["web", "retry"] });
-    expect(describeDesktopResult({ reason: "desktop-not-responding" })).toMatchObject({ title: "Hubble Desktop isn't responding", actions: ["retry", "web"] });
-    expect(describeDesktopResult({ reason: "something-new" })).toMatchObject({ tone: "error", actions: ["retry", "web"] });
+  it("offers Retry when Hubble Desktop can't be reached, and never fails silently", () => {
+    expect(describeDesktopResult({ reason: "desktop-not-found" })).toEqual({ tone: "error", title: "Hubble Desktop wasn't found", detail: "Install Hubble Desktop, open it, then try again.", actions: ["web", "retry"] });
+    expect(describeDesktopResult({ reason: "desktop-not-responding" })).toMatchObject({ title: "Hubble Desktop isn't responding", actions: ["retry"] });
+    expect(describeDesktopResult({ reason: "something-new" })).toMatchObject({ tone: "error", actions: ["retry"] });
     expect(describeDesktopResult({ reason: "invalid-payload" })).toEqual({ tone: "error", title: "Couldn't import these tabs", detail: "Please try again.", actions: ["retry"] });
   });
 

@@ -246,3 +246,52 @@ describe("useExtensionMemory, delivered more than once", () => {
     expect(handlers.saveCapture).not.toHaveBeenCalled()
   })
 })
+
+describe("on Hubble Desktop, through the paired link", () => {
+  function link(waiting: unknown[]) {
+    const answers: { requestId: string; body: unknown }[] = []
+    let onRequest: (() => void) | undefined
+    const transport = {
+      take: vi.fn(async () => waiting.splice(0)),
+      answer: vi.fn(async (requestId: string, body: unknown) => {
+        answers.push({ requestId, body })
+      }),
+      onRequest: vi.fn(async (handler: () => void) => {
+        onRequest = handler
+        return () => {}
+      }),
+    }
+    return { transport, answers, arrive: (request: unknown) => (waiting.push(request), onRequest?.()) }
+  }
+
+  it("answers the same requests the website did, and a request that arrived while starting once ready", async () => {
+    const store = await world()
+    const { transport, answers, arrive } = link([{ requestId: "early", kind: "projects", args: {} }])
+    const handlers: ExtensionMemoryHandlers = { getStore: () => store, saveCapture: vi.fn() }
+    const hook = renderHook(({ isReady }) => useExtensionMemory(handlers, isReady, transport), { initialProps: { isReady: false } })
+    // Not ready: told so, never guessed at.
+    await waitFor(() => expect(answers).toEqual([{ requestId: "early", body: { ok: false, error: "not-ready" } }]))
+    hook.rerender({ isReady: true })
+    arrive({ requestId: "r1", kind: "projects", args: {} })
+    await waitFor(() => expect(answers.some((entry) => entry.requestId === "r1")).toBe(true))
+    expect(answers.find((entry) => entry.requestId === "r1")!.body).toMatchObject({ ok: true, result: { currentId: "ia", projects: [{ id: "ia", name: "History IA" }, { id: "phys", name: "Physics" }] } })
+    // Nothing goes out through the website's channel.
+    expect(posted).toEqual([])
+  })
+
+  it("adds tabs to a chosen project through the shell's source pipeline, and refuses what it can't read", async () => {
+    const store = await world()
+    const addSources = vi.fn(() => ({ added: 1, duplicates: 0, failed: 0 }))
+    const { transport, answers } = link([
+      { requestId: "a1", kind: "add-sources", args: { workspaceId: "phys", tabs: [{ url: "https://example.com/", title: "Example" }] } },
+      { requestId: "a2", kind: "add-sources", args: { workspaceId: "gone", tabs: [{ url: "https://example.com/" }] } },
+      { requestId: "a3", kind: "rm -rf", args: {} },
+    ])
+    renderHook(() => useExtensionMemory({ getStore: () => store, saveCapture: vi.fn(), addSources }, true, transport))
+    await waitFor(() => expect(answers).toHaveLength(3))
+    expect(addSources).toHaveBeenCalledWith("phys", [{ url: "https://example.com/", title: "Example" }])
+    expect(answers.find((entry) => entry.requestId === "a1")!.body).toEqual({ ok: true, result: { added: 1, duplicates: 0, failed: 0, project: "Physics" } })
+    expect(answers.find((entry) => entry.requestId === "a2")!.body).toEqual({ ok: false, error: "project-missing" })
+    expect(answers.find((entry) => entry.requestId === "a3")!.body).toEqual({ ok: false, error: "invalid" })
+  })
+})

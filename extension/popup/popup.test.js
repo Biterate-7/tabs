@@ -116,291 +116,6 @@ function click(id) {
   document.getElementById(id).dispatchEvent(new Event("click", { bubbles: true }));
 }
 
-describe("popup dump-failure reporting", () => {
-  it("shows a specific message and no detail for no-importable-tabs", async () => {
-    chrome.runtime.sendMessage.mockResolvedValue({ ok: false, reason: "no-importable-tabs", count: 0 });
-    await loadPopup();
-
-    click("dump-button");
-    await vi.waitFor(() => {
-      expect(document.getElementById("state-error").hidden).toBe(false);
-    });
-
-    expect(document.getElementById("error-message").textContent).toBe("No importable tabs in this window.");
-    expect(document.getElementById("error-detail").hidden).toBe(true);
-  });
-
-  it("distinguishes tab-open-failed from delivery-failed, each with its own detail", async () => {
-    chrome.runtime.sendMessage.mockResolvedValue({
-      ok: false,
-      reason: "tab-open-failed",
-      count: 1,
-      detail: "This browser API function requires a user gesture to run.",
-    });
-    await loadPopup();
-
-    click("dump-button");
-    await vi.waitFor(() => {
-      expect(document.getElementById("state-error").hidden).toBe(false);
-    });
-
-    expect(document.getElementById("error-message").textContent).toBe("Couldn't open or find the Hubble tab.");
-    expect(document.getElementById("error-detail").hidden).toBe(false);
-    expect(document.getElementById("error-detail").textContent).toBe(
-      "This browser API function requires a user gesture to run."
-    );
-  });
-
-  it("surfaces the underlying delivery error so a wrong/stale tab is diagnosable", async () => {
-    chrome.runtime.sendMessage.mockResolvedValue({
-      ok: false,
-      reason: "delivery-failed",
-      count: 1,
-      detail: "Could not establish connection. Receiving end does not exist.",
-    });
-    await loadPopup();
-
-    click("dump-button");
-    await vi.waitFor(() => {
-      expect(document.getElementById("state-error").hidden).toBe(false);
-    });
-
-    expect(document.getElementById("error-message").textContent).toBe(
-      "Hubble didn't respond in that tab. Reload the Hubble page and try again."
-    );
-    expect(document.getElementById("error-detail").textContent).toBe(
-      "Could not establish connection. Receiving end does not exist."
-    );
-  });
-
-  it("reports a distinct message when the background service worker itself is unreachable", async () => {
-    chrome.runtime.sendMessage.mockRejectedValue(new Error("Extension context invalidated."));
-    await loadPopup();
-
-    click("dump-button");
-    await vi.waitFor(() => {
-      expect(document.getElementById("state-error").hidden).toBe(false);
-    });
-
-    expect(document.getElementById("error-message").textContent).toBe(
-      "Lost contact with the Hubble extension. Reopen this popup to see how the dump ended."
-    );
-    expect(document.getElementById("error-detail").textContent).toBe("Extension context invalidated.");
-  });
-
-  // Regression: the ack handshake's whole purpose is that a page which never
-  // became able to ingest produces a real, distinguishable error instead of
-  // a success the user can't reconcile with an empty workspace.
-  it("reports a page that never confirmed the import distinctly from one that never answered", async () => {
-    chrome.runtime.sendMessage.mockResolvedValue({
-      ok: false,
-      status: "error",
-      reason: "page-not-ready",
-      count: 3,
-      detail: 'Hubble page reported "page-not-ready".',
-    });
-    await loadPopup();
-
-    click("dump-button");
-    await vi.waitFor(() => {
-      expect(document.getElementById("state-error").hidden).toBe(false);
-    });
-
-    expect(document.getElementById("error-message").textContent).toBe(
-      "Hubble opened but never confirmed the import. Reload the Hubble page and try again."
-    );
-  });
-
-  it("reports an unreachable Hubble origin distinctly from an unresponsive page", async () => {
-    chrome.runtime.sendMessage.mockResolvedValue({
-      ok: false,
-      status: "error",
-      reason: "tab-load-timeout",
-      count: 3,
-      detail: "https://tabsdump.vercel.app did not finish loading within 8000ms.",
-    });
-    await loadPopup();
-
-    click("dump-button");
-    await vi.waitFor(() => {
-      expect(document.getElementById("state-error").hidden).toBe(false);
-    });
-
-    expect(document.getElementById("error-message").textContent).toBe(
-      "Hubble didn't finish loading. Check your connection and try again."
-    );
-  });
-
-  it("never shows a zero-tab success — a page that took nothing is an error", async () => {
-    chrome.runtime.sendMessage.mockResolvedValue({
-      ok: false,
-      status: "error",
-      reason: "nothing-imported",
-      count: 5,
-      accepted: 0,
-    });
-    await loadPopup();
-
-    click("dump-button");
-    await vi.waitFor(() => {
-      expect(document.getElementById("state-error").hidden).toBe(false);
-    });
-
-    expect(document.getElementById("state-success").hidden).toBe(true);
-    expect(document.getElementById("error-message").textContent).toBe(
-      "Hubble received the tabs but couldn't import any of them."
-    );
-  });
-
-  it("surfaces a dump the previous service worker was interrupted mid-way through", async () => {
-    sessionStore.tabdump_dump_state = {
-      status: "error",
-      ok: false,
-      reason: "interrupted",
-      startedAt: Date.now() - 1000,
-      finishedAt: Date.now(),
-    };
-    await import("./popup.js");
-
-    await vi.waitFor(() => {
-      expect(document.getElementById("state-error").hidden).toBe(false);
-    });
-    expect(document.getElementById("error-message").textContent).toBe(
-      "The previous dump was interrupted before it finished. Please try again."
-    );
-  });
-});
-
-// Regression: the dump used to end with background.js activating the Hubble
-// tab and focusing its window. Chrome closes an open action popup the moment
-// the foreground tab changes, so that focus routinely destroyed the popup
-// before it could paint the result it had just been handed — the user saw
-// "Dumping tabs…", then nothing. Focus now belongs to the popup, after it has
-// rendered.
-describe("window targeting", () => {
-  it("names the window it previewed, so the background never has to guess which one to dump", async () => {
-    chrome.tabs.query.mockResolvedValue([
-      { id: 1, windowId: 4, url: "https://a.com", title: "A", status: "complete" },
-      { id: 2, windowId: 4, url: "https://b.com", title: "B", status: "complete" },
-    ]);
-    chrome.runtime.sendMessage.mockResolvedValue({ ok: true, status: "done", count: 2, accepted: 2 });
-    await loadPopup();
-
-    click("dump-button");
-
-    await vi.waitFor(() => {
-      const dumpCall = chrome.runtime.sendMessage.mock.calls.find(([msg]) => msg.type === "DUMP_TABS");
-      expect(dumpCall?.[0].payload.windowId).toBe(4);
-    });
-  });
-});
-
-describe("focus handoff", () => {
-  it("renders the result first, and only then asks the background to focus the Hubble tab", async () => {
-    vi.useFakeTimers();
-    try {
-      chrome.runtime.sendMessage.mockResolvedValue({
-        ok: true,
-        status: "done",
-        count: 2,
-        accepted: 2,
-        focusTabId: 99,
-        focusWindowId: 10,
-      });
-      await import("./popup.js");
-      await vi.waitFor(() => expect(document.getElementById("state-ready").hidden).toBe(false), { timeout: 100 });
-
-      click("dump-button");
-      await vi.waitFor(() => expect(document.getElementById("state-success").hidden).toBe(false), { timeout: 100 });
-
-      // Rendered, but not yet dismissed: no focus request has gone out.
-      expect(chrome.runtime.sendMessage).not.toHaveBeenCalledWith(
-        expect.objectContaining({ type: "TABDUMP_FOCUS" })
-      );
-
-      await vi.advanceTimersByTimeAsync(1000);
-      expect(chrome.runtime.sendMessage).toHaveBeenCalledWith({
-        type: "TABDUMP_FOCUS",
-        payload: { tabId: 99, windowId: 10 },
-      });
-      await vi.waitFor(() => expect(closed).toHaveBeenCalled(), { timeout: 100 });
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it("offers an explicit way to reach the workspace, using the tab the dump actually landed in", async () => {
-    sessionStore.tabdump_dump_state = {
-      status: "done",
-      ok: true,
-      count: 4,
-      accepted: 4,
-      focusTabId: 77,
-      focusWindowId: 3,
-      shownTab: SHOWN,
-      finishedAt: Date.now(),
-    };
-    await import("./popup.js");
-    await vi.waitFor(() => expect(document.getElementById("state-success").hidden).toBe(false));
-
-    click("open-button");
-    await vi.waitFor(() => {
-      expect(chrome.runtime.sendMessage).toHaveBeenCalledWith({
-        type: "TABDUMP_FOCUS",
-        payload: { tabId: 77, windowId: 3 },
-      });
-    });
-  });
-});
-
-describe("honest success reporting", () => {
-  it("reports the count the page accepted, not the count that was sent", async () => {
-    chrome.runtime.sendMessage.mockResolvedValue({ ok: true, status: "partial", count: 10, accepted: 7 });
-    await loadPopup();
-
-    click("dump-button");
-    await vi.waitFor(() => expect(document.getElementById("state-success").hidden).toBe(false));
-
-    expect(document.getElementById("success-count").textContent).toBe("7");
-    expect(document.getElementById("success-detail").hidden).toBe(false);
-    expect(document.getElementById("success-detail").textContent).toContain("3 couldn't be read as a link");
-  });
-
-  it("says how many browser pages Chrome wouldn't let it read, rather than quietly omitting them", async () => {
-    chrome.runtime.sendMessage.mockResolvedValue({
-      ok: true,
-      status: "done",
-      count: 4,
-      accepted: 4,
-      skippedRestricted: 2,
-    });
-    await loadPopup();
-
-    click("dump-button");
-    await vi.waitFor(() => expect(document.getElementById("state-success").hidden).toBe(false));
-
-    expect(document.getElementById("success-count").textContent).toBe("4");
-    expect(document.getElementById("success-detail").textContent).toContain("2 browser pages skipped");
-  });
-
-  it("shows no extra detail line for a clean, complete dump", async () => {
-    chrome.runtime.sendMessage.mockResolvedValue({
-      ok: true,
-      status: "done",
-      count: 4,
-      accepted: 4,
-      skippedRestricted: 0,
-      skippedAlreadyImported: 0,
-    });
-    await loadPopup();
-
-    click("dump-button");
-    await vi.waitFor(() => expect(document.getElementById("state-success").hidden).toBe(false));
-
-    expect(document.getElementById("success-detail").hidden).toBe(true);
-  });
-});
-
 // Regression: chrome.storage.session.onChanged hands its listener only
 // `changes`. The popup used to subscribe there with a `(changes, areaName)`
 // handler and drop everything, so no popup ever saw a dump finish — the
@@ -447,27 +162,6 @@ describe("storage subscription", () => {
     }
     await new Promise((resolve) => setTimeout(resolve, 10));
     expect(document.getElementById("state-dumping").hidden).toBe(false);
-  });
-});
-
-describe("in-flight progress", () => {
-  it("reflects the phase the dump has reached instead of a frozen 'Dumping tabs…'", async () => {
-    chrome.runtime.sendMessage.mockReturnValue(new Promise(() => {}));
-    await loadPopup();
-
-    click("dump-button");
-    await vi.waitFor(() => expect(document.getElementById("state-dumping").hidden).toBe(false));
-    expect(document.getElementById("dumping-message").textContent).toBe("Reading your open tabs…");
-
-    fireStorageChange({ status: "running", phase: "delivering", startedAt: Date.now() });
-    await vi.waitFor(() => {
-      expect(document.getElementById("dumping-message").textContent).toBe("Handing your tabs to Hubble…");
-    });
-
-    fireStorageChange({ status: "running", phase: "retrying-in-new-tab", startedAt: Date.now() });
-    await vi.waitFor(() => {
-      expect(document.getElementById("dumping-message").textContent).toContain("retrying in a new one");
-    });
   });
 });
 
@@ -633,48 +327,6 @@ describe("recovering dump state on a fresh popup open", () => {
   });
 });
 
-describe("double-click / re-entrant dump protection", () => {
-  it("sends only one MSG_DUMP_TABS request when the dump button is clicked twice in quick succession", async () => {
-    let resolveResponse;
-    chrome.runtime.sendMessage.mockReturnValue(new Promise((resolve) => (resolveResponse = resolve)));
-    await loadPopup();
-
-    const button = document.getElementById("dump-button");
-    button.dispatchEvent(new Event("click", { bubbles: true }));
-    button.dispatchEvent(new Event("click", { bubbles: true }));
-
-    // loadPopup()'s own detectTabs() already sent one MSG_CHECK_IMPORTED —
-    // this only asserts on the dump request itself, exactly one of which
-    // must have been sent despite the two clicks.
-    const dumpCalls = chrome.runtime.sendMessage.mock.calls.filter(([msg]) => msg.type === "DUMP_TABS");
-    expect(dumpCalls).toHaveLength(1);
-
-    resolveResponse({ ok: true, count: 1 });
-    await vi.waitFor(() => {
-      expect(document.getElementById("state-success").hidden).toBe(false);
-    });
-  });
-
-  it("attaches to the real dump's outcome instead of dead-ending when background.js reports already-running", async () => {
-    chrome.runtime.sendMessage.mockResolvedValue({ ok: false, reason: "already-running", count: 0 });
-    await loadPopup();
-
-    click("dump-button");
-    await vi.waitFor(() => {
-      expect(document.getElementById("state-dumping").hidden).toBe(false);
-    });
-    // Must not have collapsed into a dead-end error screen while the real
-    // dump this popup didn't start is still going.
-    expect(document.getElementById("state-error").hidden).toBe(true);
-
-    fireStorageChange({ status: "done", ok: true, count: 3, finishedAt: Date.now() });
-    await vi.waitFor(() => {
-      expect(document.getElementById("state-success").hidden).toBe(false);
-    });
-    expect(document.getElementById("success-count").textContent).toBe("3");
-  });
-});
-
 // The popup and quick add (the tab's right-click menu, the shortcut) share one
 // remembered project: preselected here, written as { id, name } so the menu
 // can name it, and still read from an older popup's bare id.
@@ -749,12 +401,12 @@ describe("the remembered project", () => {
     expect(document.getElementById("project-unavailable").hidden).toBe(true);
   });
 
-  it("with no Hubble tab and no project yet, says to open one in Hubble", async () => {
+  it("with Hubble Desktop unreachable and no project yet, says to connect it", async () => {
     withProjects(undefined, { hubbleOpen: false });
     await loadPopup();
     await vi.waitFor(() => expect(document.getElementById("project-unavailable").hidden).toBe(false));
     expect(document.getElementById("project-section").hidden).toBe(true);
-    expect(document.getElementById("project-unavailable").textContent).toBe("Open Hubble to add this tab to a project.");
+    expect(document.getElementById("project-unavailable").textContent).toBe("Connect to Hubble Desktop to add this tab to a project.");
   });
 
   it("Add this tab sends this tab to the project", async () => {
@@ -790,13 +442,14 @@ describe("the remembered project", () => {
     );
   });
 
-  it("keeps the plain dump, which never names a project", async () => {
+  it("sends Save all tabs to Hubble Desktop, which asks where they go — never naming a project", async () => {
     withProjects({ id: "ws-history", name: "History IA" });
     await projectSectionShown();
     document.getElementById("dump-button").click();
-    await vi.waitFor(() => expect(chrome.runtime.sendMessage).toHaveBeenCalledWith(expect.objectContaining({ type: "DUMP_TABS" })));
-    const dump = chrome.runtime.sendMessage.mock.calls.find(([message]) => message.type === "DUMP_TABS")[0];
-    expect(dump.payload.target).toBeUndefined();
+    await vi.waitFor(() =>
+      expect(chrome.runtime.sendMessage).toHaveBeenCalledWith({ type: "HUBBLE_ADD_TO_DESKTOP", payload: { scope: "window", windowId: 5 } })
+    );
+    expect(chrome.runtime.sendMessage).not.toHaveBeenCalledWith(expect.objectContaining({ type: "DUMP_TABS" }));
   });
 
   it("never talks about dragging or managing tabs", async () => {
@@ -845,5 +498,48 @@ describe("adding selected tabs to a project", () => {
     await vi.waitFor(() => expect(document.getElementById("state-success").hidden).toBe(false));
     expect(document.getElementById("success-project").textContent).toBe("Added 2 sources to History IA");
     expect(document.getElementById("success-detail").textContent).toBe("1 already in the project");
+  });
+});
+
+describe("the Hubble Desktop section", () => {
+  function desktopStatus(status) {
+    chrome.runtime.sendMessage.mockImplementation(async (message) => (message?.type === "HUBBLE_DESKTOP_STATUS" ? { ok: true, ...status } : undefined));
+  }
+
+  it("is always there, saying Hubble Desktop isn't running", async () => {
+    desktopStatus({ available: false, paired: false, pairable: true, seen: false });
+    await loadPopup();
+    await vi.waitFor(() => expect(document.getElementById("desktop-section").hidden).toBe(false));
+    expect(document.getElementById("desktop-status").textContent).toBe("· not running");
+    expect(document.getElementById("desktop-connect-row").hidden).toBe(true);
+  });
+
+  it("offers Connect while Hubble Desktop is open and not connected, and asks the worker to pair", async () => {
+    desktopStatus({ available: true, paired: false, pairable: true, seen: true });
+    await loadPopup();
+    await vi.waitFor(() => expect(document.getElementById("desktop-connect-row").hidden).toBe(false));
+    expect(document.getElementById("desktop-status").textContent).toBe("· open, not connected");
+    click("desktop-connect-button");
+    await vi.waitFor(() => expect(chrome.runtime.sendMessage).toHaveBeenCalledWith({ type: "HUBBLE_DESKTOP_PAIR" }));
+    expect(document.getElementById("desktop-pair-status").textContent).toBe("Asking Hubble Desktop…");
+  });
+
+  it("shows the code Hubble Desktop shows, then says it is connected", async () => {
+    desktopStatus({ available: true, paired: false, pairable: true, seen: true });
+    await loadPopup();
+    await vi.waitFor(() => expect(document.getElementById("desktop-connect-row").hidden).toBe(false));
+    for (const listener of globalChangeListeners) listener({ hubble_pair_state: { newValue: { status: "waiting", code: "482913", updatedAt: Date.now() } } }, "session");
+    expect(document.getElementById("desktop-pair-status").textContent).toBe("In Hubble Desktop, check the code is 482 913 and choose Connect.");
+    expect(document.getElementById("desktop-connect-button").disabled).toBe(true);
+    for (const listener of globalChangeListeners) listener({ hubble_pair_state: { newValue: { status: "approved", updatedAt: Date.now() } } }, "session");
+    expect(document.getElementById("desktop-status").textContent).toBe("· connected");
+    expect(document.getElementById("desktop-connect-row").hidden).toBe(true);
+  });
+
+  it("says connected once paired", async () => {
+    desktopStatus({ available: true, paired: true, seen: true });
+    await loadPopup();
+    await vi.waitFor(() => expect(document.getElementById("desktop-status").textContent).toBe("· connected"));
+    expect(document.getElementById("desktop-connect-row").hidden).toBe(true);
   });
 });

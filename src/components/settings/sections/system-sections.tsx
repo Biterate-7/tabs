@@ -29,6 +29,8 @@ import { ProjectIcon } from "@/components/workspace/project-icon"
 import { EXTENSION_DOWNLOAD_URL } from "@/lib/extension-config"
 import { getOnboardingState } from "@/lib/onboarding"
 import { useIsDesktop } from "@/hooks/use-is-desktop"
+import { desktopLink } from "@/lib/platform"
+import { PairedExtensions } from "@/components/extension-link/paired-extensions"
 import { modKeyLabel } from "@/lib/keyboard"
 import type { Workspace } from "@/lib/workspace/types"
 import { FieldRow, GroupLabel, SectionHeading, SectionStack } from "./section-ui"
@@ -109,6 +111,7 @@ export function AccountSettingsSection() {
 /** Settings → Chrome extension: whether it is connected, what it reads, and how to install it. */
 export function ExtensionSection() {
   const isDesktop = useIsDesktop()
+  const link = desktopLink()
   // The website hears from the extension through the page; Hubble Desktop never does (Chrome reaches it over its own
   // local bridge), so there it says how to send tabs instead of a status that could only ever read "Not connected".
   const connected = !isDesktop && getOnboardingState().extensionConnected
@@ -120,7 +123,7 @@ export function ExtensionSection() {
           label="Hubble for Chrome"
           description={
             isDesktop
-              ? "Sends tabs here: in Chrome, right-click a tab → Hubble → Add to Hubble Desktop. Save to Hubble on an AI chat saves here while this app is open."
+              ? "The companion extension: saves AI conversations and tabs from Chrome into your projects here, and brings what you saved into your next AI chat."
               : "Save tabs and AI conversations from Chrome."
           }
         >
@@ -131,6 +134,7 @@ export function ExtensionSection() {
             </a>
           </span>
         </FieldRow>
+        {link && <PairedExtensions api={link} />}
         <FieldRow
           label="What it reads"
           description="What you send: tab titles and addresses, and a conversation's visible text when you choose Save to Hubble. With context detection on (Settings → Context), also the addresses and titles of pages you use, and — only for AI apps you allow — topic words from open chats. Never cookies, passwords or what you type."

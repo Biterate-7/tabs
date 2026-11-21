@@ -101,7 +101,7 @@ describe("a save's state", () => {
     save().click();
     expect(status()).toBe("Reading the conversation…");
     await settle();
-    expect(status()).toMatch(/^Not saved yet — Hubble didn't answer in time\. Hubble for Chrome will try again in \d s\.$/);
+    expect(status()).toMatch(/^Not saved yet — Hubble Desktop didn't answer in time\. Hubble for Chrome will try again in \d s\.$/);
     expect(status()).not.toMatch(/Saved to/);
     expect(retry().hidden).toBe(false);
   });
@@ -129,7 +129,7 @@ describe("a save's state", () => {
   it("follows the job as the background delivers it, after the popup was reopened", async () => {
     await mount({ hubbleOpen: true, answers: { [MSG_CAPTURE_STATUS]: { ok: true, job: job({ status: "queued", error: "no-hubble-tab" }) } } });
     await settle();
-    expect(status()).toBe("Not saved yet — Hubble isn't open. Hubble for Chrome will try again when Hubble is open.");
+    expect(status()).toBe("Not saved yet — Hubble Desktop isn't open. Hubble for Chrome will try again when Hubble Desktop is open.");
     storageChanged(CAPTURE_JOBS_KEY, [{ ...job({ status: "saving", attempts: 2, updatedAt: 2 }), capture: { turns: [] } }]);
     expect(status()).toBe("Saving to Physics…");
     storageChanged(CAPTURE_JOBS_KEY, [job({ status: "saved", attempts: 2, updatedAt: 3, result: { outcome: "added", turns: 2, project: "Physics" } })]);

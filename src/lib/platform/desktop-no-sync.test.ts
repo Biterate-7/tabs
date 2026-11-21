@@ -56,9 +56,20 @@ it("keeps every sync route handler out of the desktop page tree", () => {
 it("keeps the desktop build's pageExtensions to tsx only", () => {
   const config = readFileSync(path.join(REPO_ROOT, "next.config.ts"), "utf8");
   // Widening this — or dropping it — would pull every route.ts into the
-  // static export, which cannot represent a route handler at all.
-  expect(config).toMatch(/pageExtensions:\s*\["tsx"\]/);
+  // static export, which cannot represent a route handler at all. The
+  // website's own pages (`page.web.tsx`) are not pages here either.
+  expect(config).toMatch(/pageExtensions:\s*\["desktop\.tsx", "tsx"\]/);
   expect(config).toMatch(/output:\s*"export"/);
+});
+
+it("gives the website the launch page at / and the desktop build the app", () => {
+  const config = readFileSync(path.join(REPO_ROOT, "next.config.ts"), "utf8");
+  expect(config).toMatch(/pageExtensions:\s*\["web\.tsx", "tsx", "ts"\]/);
+  const app = path.join(REPO_ROOT, "src", "app");
+  // Exactly one root page per build: `page.desktop.tsx` (the app) and `page.web.tsx` (the launch site).
+  expect(readdirSync(app).filter((file) => /^page\./.test(file)).sort()).toEqual(["page.desktop.tsx", "page.web.tsx"]);
+  expect(readFileSync(path.join(app, "page.desktop.tsx"), "utf8")).toMatch(/AppRoot/);
+  expect(readFileSync(path.join(app, "page.web.tsx"), "utf8")).not.toMatch(/AppRoot|AppShell/);
 });
 
 it("has no sync route that reaches for a database outside the web build", () => {

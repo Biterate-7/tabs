@@ -28,7 +28,7 @@ use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_opener::OpenerExt;
 
 /// The deployed Hubble this app signs in to.
-pub const DEFAULT_ACCOUNT_ORIGIN: &str = "https://hubble-hq.vercel.app";
+pub const DEFAULT_ACCOUNT_ORIGIN: &str = "https://hubblehq.vercel.app";
 /// Told to the webview whenever the signed-in state may have changed.
 pub const ACCOUNT_CHANGED_EVENT: &str = "hubble-account:changed";
 
@@ -472,7 +472,7 @@ mod tests {
 
     #[test]
     fn origin_override_is_https_or_loopback_only() {
-        assert!(is_allowed_origin("https://hubble-hq.vercel.app"));
+        assert!(is_allowed_origin("https://hubblehq.vercel.app"));
         assert!(is_allowed_origin("http://localhost:3000"));
         assert!(is_allowed_origin("http://127.0.0.1:3000"));
         for bad in ["http://evil.example", "ftp://x", "https://x/path", "https://user@x", "not a url"] {

@@ -3,6 +3,10 @@ import { describe, expect, it, vi } from "vitest";
 import { checkForDesktopUpdate, probeDownload } from "./install";
 import { releaseManifest, type DesktopBuild, type DesktopOs } from "./release";
 import { GET as manifestRoute } from "@/app/api/desktop/release/route";
+import { parseGithubRelease } from "./artifacts";
+
+const live = vi.hoisted(() => ({ release: null as unknown }));
+vi.mock("@/lib/desktop/release-source", () => ({ getLatestDesktopRelease: async () => live.release }));
 
 const SHA = "b".repeat(64);
 const ORIGIN = "https://hubble.example";
@@ -86,13 +90,23 @@ describe("checkForDesktopUpdate", () => {
 });
 
 describe("GET /api/desktop/release", () => {
-  it("serves the shipped table to any origin, with no URL and no credentials involved", async () => {
-    const response = manifestRoute();
+  it("serves the latest published release to any origin, with no URL and no credentials involved", async () => {
+    live.release = parseGithubRelease({
+      tag_name: "desktop-v0.2.0",
+      draft: false,
+      prerelease: false,
+      published_at: "2026-11-19T10:00:00Z",
+      body: "",
+      assets: [{ name: "Hubble_0.2.0_x64-setup.exe", size: 31_000_000, state: "uploaded", digest: `sha256:${SHA}` }],
+    });
+    const response = await manifestRoute();
     expect(response.status).toBe(200);
     expect(response.headers.get("access-control-allow-origin")).toBe("*");
     expect(response.headers.get("access-control-allow-credentials")).toBeNull();
     const body = await response.json();
-    expect(body).toEqual(JSON.parse(JSON.stringify(releaseManifest())));
+    expect(body.builds.windows).toEqual({ status: "published", version: "0.2.0", sha256: SHA, bytes: 31_000_000 });
+    expect(body.release.artifacts[0].name).toBe("Hubble_0.2.0_x64-setup.exe");
+    expect(JSON.stringify(body)).not.toMatch(/https?:/);
     // What an installed app reads back is exactly what the web offers.
     const answer = await checkForDesktopUpdate({ installed: "0.0.1", os: "windows", fetchImpl: serve(body), origin: ORIGIN });
     expect(answer).toMatchObject({ kind: "available", latest: body.builds.windows.version });

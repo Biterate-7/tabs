@@ -123,7 +123,7 @@ describe("Hubble product metadata", () => {
 
   it("titles the web app Hubble", () => {
     expect(readText("src", "app", "layout.tsx")).toMatch(/title: "Hubble",/);
-    expect(readText("src", "app", "welcome", "page.tsx")).toMatch(/siteName: "Hubble"/);
+    expect(readText("src", "app", "page.web.tsx")).toMatch(/siteName: "Hubble"/);
   });
 
   it("publishes the Hubble contact address on the legal pages", () => {

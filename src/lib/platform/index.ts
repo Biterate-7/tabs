@@ -7,7 +7,7 @@
  * adapter itself costs a few bytes.
  */
 import { isDesktop } from "./detect";
-import { desktopAccount, desktopAppInfo, desktopImportBridge, desktopPlatform, type DesktopAppInfo } from "./desktop";
+import { desktopAccount, desktopAppInfo, desktopExtensionLink, desktopImportBridge, desktopPlatform, type DesktopAppInfo } from "./desktop";
 import { webPlatform } from "./web";
 import type { PlatformAdapter } from "./types";
 
@@ -48,7 +48,13 @@ export function desktopImport(): typeof desktopImportBridge | undefined {
   return isDesktop() ? desktopImportBridge : undefined;
 }
 
+/** Hubble for Chrome paired with this app (src-tauri/src/extension_link.rs). `undefined` on the web. */
+export function desktopLink(): typeof desktopExtensionLink | undefined {
+  return isDesktop() ? desktopExtensionLink : undefined;
+}
+
 export type { DesktopAppInfo };
+export type { DesktopPairingRequest, DesktopExtensionLink } from "./desktop";
 export type { DesktopAccountStatus } from "./desktop";
 
 /** The desktop app's account (sign-in through the browser). `undefined` on the web, where the session cookie is the account. */

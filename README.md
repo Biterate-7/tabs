@@ -1,6 +1,6 @@
 # Hubble
 
-Hubble is one connected workspace for everything you learn and create with AI. Conversations from ChatGPT, Claude, Gemini and Perplexity, the pages, PDFs and videos you read, and your own notes live together in **projects** — so you can find any of it later and bring it into your next AI chat, in whichever app. It ships as a web app, a Chrome extension and a desktop app from this one codebase.
+Hubble is one connected workspace for everything you learn and create with AI. Conversations from ChatGPT, Claude, Gemini and Perplexity, the pages, PDFs and videos you read, and your own notes live together in **projects** — so you can find any of it later and bring it into your next AI chat, in whichever app. It ships as **Hubble Desktop** (Windows, macOS, Linux — the app itself), **Hubble for Chrome** (its companion extension) and the **Hubble website** (launch and download site), from this one codebase. See [docs/hubble-desktop-first.md](docs/hubble-desktop-first.md) for how they fit together.
 
 **The loop:** capture → connect → find → reuse. Save a conversation from the page with Hubble for Chrome (or import an export, or paste it); it joins a project with your sources and notes; search finds it across projects and AI apps, down to the turn; **Use in AI chat** writes chosen items up as context — notes, AI answers and sources kept apart, every quote with where it came from — for you to review, then copy or insert into the message box. Hubble never sends anything for you, and never signs in to an AI app. See [docs/cross-ai-memory.md](docs/cross-ai-memory.md) for the model, capture paths, the provider capability matrix, the extension protocol and privacy.
 
@@ -14,21 +14,15 @@ This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-
 
 ## Getting Started
 
-First, run the development server:
-
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+npm install
+npm run desktop:dev     # Hubble Desktop (the app) in a Tauri window, hot reload — needs Rust
+npm run dev             # the website (launch page, /download, APIs) at http://localhost:3000
+npm test
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
-
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+The app's entry is `src/app/page.desktop.tsx`; the website's `/` is `src/app/page.web.tsx`.
+Releasing installers: [docs/desktop-release.md](docs/desktop-release.md).
 
 This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
 

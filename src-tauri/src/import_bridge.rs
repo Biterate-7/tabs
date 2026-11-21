@@ -69,6 +69,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tauri::{AppHandle, Emitter, Manager};
 
+use crate::extension_link::{self, Link, LinkRefusal};
+
 
 /// The wire protocol version. Mirrors `DESKTOP_PROTOCOL_VERSION` in
 /// extension/src/desktop.js and src/lib/desktop/import-protocol.ts.
@@ -463,6 +465,8 @@ pub struct Bridge {
     relays: HashMap<String, Relay>,
     /// The port the listener bound, once it has — the relay page needs it.
     port: Option<u16>,
+    /// Paired extensions and their requests (extension_link.rs).
+    pub link: Link,
 }
 
 /* ------------------------------------------------------------------ *
@@ -759,6 +763,11 @@ impl Bridge {
         Ok(())
     }
 
+    /// The webview has asked for paired requests: it is up and answering.
+    pub fn mark_webview_ready(&mut self) {
+        self.webview_ready = true;
+    }
+
     pub fn webview_ready(&self) -> bool {
         self.webview_ready
     }
@@ -895,6 +904,30 @@ pub enum Effect {
     Queued { request_id: String, kind: &'static str, items: usize },
     /// Chrome's answer to a relay arrived.
     Relayed { id: String },
+    /// An extension asked to pair: the window shows the dialog.
+    PairRequested,
+    /// A paired request is queued: the response is the webview's answer, written once it arrives.
+    AwaitLink { request_id: String, kind: String, receiver: LinkAnswer },
+}
+
+/// The webview's answer to one paired request, when it comes. Compared and
+/// printed by nothing but its presence, so `Effect` stays testable.
+pub struct LinkAnswer(pub std::sync::mpsc::Receiver<Value>);
+
+impl std::fmt::Debug for LinkAnswer {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("LinkAnswer")
+    }
+}
+
+impl PartialEq for LinkAnswer {
+    fn eq(&self, _: &Self) -> bool {
+        true
+    }
+}
+
+fn link_refusal(refusal: LinkRefusal, allow_origin: Option<String>) -> HttpResponse {
+    HttpResponse { status: refusal.status(), body: json!({ "ok": false, "reason": refusal.reason() }), allow_origin }
 }
 
 fn refusal(refusal: Refusal, allow_origin: Option<String>) -> HttpResponse {
@@ -940,6 +973,8 @@ pub fn route(bridge: &Mutex<Bridge>, request: &HttpRequest, port: u16, now: Inst
                     "ready": bridge.webview_ready(),
                     "maxTabs": MAX_TABS,
                     "kinds": PAYLOAD_KINDS,
+                    // This app pairs with Hubble for Chrome (/v1/pair, /v1/link/*).
+                    "link": 1,
                 }),
                 allow_origin: allow,
             },
@@ -993,6 +1028,62 @@ pub fn route(bridge: &Mutex<Bridge>, request: &HttpRequest, port: u16, now: Inst
                 (refusal(r, allow), None)
             }
         },
+        // ---- the paired link (extension_link.rs). Every route is a POST, so it always carries the extension's Origin.
+        ("POST", ["v1", "pair"]) => {
+            let label = serde_json::from_slice::<Value>(&request.body).ok().and_then(|body| body.get("label").and_then(Value::as_str).map(str::to_string));
+            match bridge.link.begin_pairing(extension_origin.as_deref().unwrap_or(""), label.as_deref(), now) {
+                Ok((id, code)) => {
+                    log("pair-requested", &[("pairingId", &id)]);
+                    (
+                        HttpResponse {
+                            status: 201,
+                            body: json!({ "pairingId": id, "code": code, "expiresInMs": extension_link::PAIR_TTL.as_millis() as u64 }),
+                            allow_origin: allow,
+                        },
+                        Some(Effect::PairRequested),
+                    )
+                }
+                Err(r) => (link_refusal(r, allow), None),
+            }
+        }
+        ("POST", ["v1", "pair", id, "status"]) => match bridge.link.pairing_status(id, extension_origin.as_deref().unwrap_or(""), now) {
+            Ok(body) => {
+                log("pair-status", &[("pairingId", id), ("status", body["status"].as_str().unwrap_or(""))]);
+                (HttpResponse { status: 200, body, allow_origin: allow }, None)
+            }
+            Err(r) => (link_refusal(r, allow), None),
+        },
+        ("POST", ["v1", "link", action]) => {
+            let link_id = match bridge.link.authenticate(bearer(request), extension_origin.as_deref()) {
+                Ok(link_id) => link_id,
+                Err(r) => return (link_refusal(r, allow), None),
+            };
+            match *action {
+                "status" => (
+                    HttpResponse {
+                        status: 200,
+                        body: json!({ "paired": true, "linkId": link_id, "app": "hubble-desktop", "version": env!("CARGO_PKG_VERSION"), "ready": bridge.webview_ready(), "kinds": extension_link::LINK_REQUEST_KINDS }),
+                        allow_origin: allow,
+                    },
+                    None,
+                ),
+                "forget" => {
+                    bridge.link.forget(&link_id);
+                    log("link-forgotten", &[("linkId", &link_id)]);
+                    (HttpResponse { status: 200, body: json!({ "ok": true }), allow_origin: allow }, None)
+                }
+                "request" => match bridge.link.submit(&link_id, &request.body, now) {
+                    Ok((request_id, receiver)) => {
+                        let kind = serde_json::from_slice::<Value>(&request.body).ok().and_then(|v| v.get("kind").and_then(Value::as_str).map(str::to_string)).unwrap_or_default();
+                        log("link-request", &[("requestId", &request_id), ("kind", &kind)]);
+                        (HttpResponse { status: 200, body: Value::Null, allow_origin: allow }, Some(Effect::AwaitLink { request_id, kind, receiver: LinkAnswer(receiver) }))
+                    }
+                    Err(r) => (link_refusal(r, allow), None),
+                },
+                _ => (refusal(Refusal::NotFound, allow), None),
+            }
+        }
+        (_, ["v1", "pair"]) | (_, ["v1", "pair", _, "status"]) | (_, ["v1", "link", _]) => (refusal(Refusal::MethodNotAllowed, allow), None),
         (_, ["v1", "relay", _]) => (refusal(Refusal::MethodNotAllowed, allow), None),
         (_, ["v1", "hello"]) | (_, ["v1", "sessions"]) | (_, ["v1", "sessions", _]) | (_, ["v1", "sessions", _, "import"]) => {
             (refusal(Refusal::MethodNotAllowed, allow), None)
@@ -1062,10 +1153,22 @@ pub fn start(app: AppHandle, bridge: Arc<Mutex<Bridge>>) {
 fn serve(mut stream: TcpStream, app: &AppHandle, bridge: &Mutex<Bridge>, port: u16) {
     let _ = stream.set_read_timeout(Some(IO_TIMEOUT));
     let _ = stream.set_write_timeout(Some(IO_TIMEOUT));
-    let (response, effect) = match read_request(&mut stream) {
+    let (mut response, effect) = match read_request(&mut stream) {
         Ok(request) => route(bridge, &request, port, Instant::now()),
         Err(status) => (HttpResponse { status, body: json!({ "ok": false, "reason": "bad-request" }), allow_origin: None }, None),
     };
+
+    // A paired request is answered by the webview: wait for it (without holding the bridge), then reply.
+    if let Some(Effect::AwaitLink { request_id, kind, receiver }) = &effect {
+        let _ = app.emit(extension_link::LINK_REQUEST_EVENT, json!({ "requestId": request_id, "kind": kind }));
+        let answer = receiver.0.recv_timeout(extension_link::LINK_ANSWER_TTL + Duration::from_secs(1)).unwrap_or_else(|_| {
+            bridge.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).link.abandon(request_id);
+            json!({ "ok": false, "error": "timed-out" })
+        });
+        log("link-answered", &[("requestId", request_id), ("ok", if answer["ok"] == true { "yes" } else { "no" })]);
+        response.body = answer;
+    }
+
     let _ = write_response(&mut stream, &response);
     let _ = stream.shutdown(Shutdown::Both);
 
@@ -1078,7 +1181,11 @@ fn serve(mut stream: TcpStream, app: &AppHandle, bridge: &Mutex<Bridge>, port: u
             let _ = app.emit(RELAY_DELIVERED_EVENT, json!({ "id": id }));
             focus_main_window(app);
         }
-        None => {}
+        Some(Effect::PairRequested) => {
+            let _ = app.emit(extension_link::PAIR_REQUESTED_EVENT, json!({}));
+            focus_main_window(app);
+        }
+        Some(Effect::AwaitLink { .. }) | None => {}
     }
 }
 
@@ -1150,6 +1257,48 @@ pub fn desktop_relay_take(state: tauri::State<'_, ImportBridgeState>, id: String
 #[tauri::command]
 pub fn desktop_relay_cancel(state: tauri::State<'_, ImportBridgeState>, id: String) {
     state.0.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).cancel_relay(&id);
+}
+
+/* ---------------- the paired link (extension_link.rs) ---------------- */
+
+/// Pairing requests waiting for the person.
+#[tauri::command]
+pub fn desktop_pair_pending(state: tauri::State<'_, ImportBridgeState>) -> Vec<Value> {
+    state.0.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).link.pending_pairings(Instant::now())
+}
+
+/// The person's answer to one pairing request.
+#[tauri::command]
+pub fn desktop_pair_answer(state: tauri::State<'_, ImportBridgeState>, id: String, approve: bool) -> Result<(), String> {
+    let result = state.0.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).link.answer_pairing(&id, approve, Instant::now());
+    log("pair-answered", &[("pairingId", &id), ("approved", if approve { "yes" } else { "no" }), ("recorded", if result.is_ok() { "yes" } else { "no" })]);
+    result
+}
+
+/// Paired extensions, for Settings (never their token hashes).
+#[tauri::command]
+pub fn desktop_link_list(state: tauri::State<'_, ImportBridgeState>) -> Vec<Value> {
+    state.0.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).link.list()
+}
+
+/// Settings → Disconnect.
+#[tauri::command]
+pub fn desktop_link_revoke(state: tauri::State<'_, ImportBridgeState>, id: String) -> bool {
+    state.0.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).link.revoke(&id)
+}
+
+/// Paired requests waiting for the webview. Calling it also marks the webview ready.
+#[tauri::command]
+pub fn desktop_link_take(state: tauri::State<'_, ImportBridgeState>) -> Vec<Value> {
+    let mut bridge = state.0.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    bridge.mark_webview_ready();
+    bridge.link.take(Instant::now())
+}
+
+/// The webview's answer to one paired request.
+#[tauri::command]
+pub fn desktop_link_answer(state: tauri::State<'_, ImportBridgeState>, request_id: String, answer: Value) -> Result<(), String> {
+    state.0.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).link.answer(&request_id, answer)
 }
 
 /* ------------------------------------------------------------------ *
@@ -1598,6 +1747,74 @@ mod tests {
         assert_eq!(hello.body["ready"], false);
         bridge.lock().unwrap().take(now);
         assert_eq!(route(&bridge, &request("GET", "/v1/hello", &[], b""), PORT, now).0.body["ready"], true);
+    }
+
+    fn post_as(origin: &str, path: &str, token: Option<&str>, body: &Value) -> HttpRequest {
+        let auth = token.map(|t| format!("Bearer {t}"));
+        let mut headers: Vec<(&str, &str)> = vec![("origin", origin)];
+        if let Some(auth) = auth.as_deref() {
+            headers.push(("authorization", auth));
+        }
+        request("POST", path, &headers, body.to_string().as_bytes())
+    }
+
+    /// Pairs EXT through the routes, approving in "the window"; returns the token.
+    fn pair_over_http(bridge: &Mutex<Bridge>, now: Instant) -> String {
+        let (begun, effect) = route(bridge, &post_as(EXT, "/v1/pair", None, &json!({ "label": "Chrome" })), PORT, now);
+        assert_eq!(begun.status, 201);
+        assert_eq!(effect, Some(Effect::PairRequested));
+        let id = begun.body["pairingId"].as_str().unwrap().to_string();
+        assert_eq!(begun.body["code"].as_str().unwrap().len(), 6);
+        bridge.lock().unwrap().link.answer_pairing(&id, true, now).unwrap();
+        let status = route(bridge, &post_as(EXT, &format!("/v1/pair/{id}/status"), None, &json!({})), PORT, now).0;
+        assert_eq!(status.body["status"], "approved");
+        status.body["token"].as_str().unwrap().to_string()
+    }
+
+    #[test]
+    fn pairing_and_paired_requests_go_only_to_the_paired_extension() {
+        let bridge = Mutex::new(Bridge::default());
+        let now = Instant::now();
+        // A web page can't even ask.
+        assert_eq!(route(&bridge, &post_as("https://evil.example", "/v1/pair", None, &json!({})), PORT, now).0.status, 403);
+        let token = pair_over_http(&bridge, now);
+        let other = "chrome-extension://ponmlkjihgfedcbaponmlkjihgfedcba";
+        // Status needs the token and the origin it was issued to.
+        let status = route(&bridge, &post_as(EXT, "/v1/link/status", Some(&token), &json!({})), PORT, now).0;
+        assert_eq!(status.status, 200);
+        assert_eq!(status.body["paired"], true);
+        assert_eq!(route(&bridge, &post_as(other, "/v1/link/status", Some(&token), &json!({})), PORT, now).0.status, 401);
+        assert_eq!(route(&bridge, &post_as(EXT, "/v1/link/status", None, &json!({})), PORT, now).0.status, 401);
+        assert_eq!(route(&bridge, &post_as(EXT, "/v1/link/status", Some(&"f".repeat(64)), &json!({})), PORT, now).0.status, 401);
+        // A paired request is queued for the webview and answered through the same response.
+        let (response, effect) = route(&bridge, &post_as(EXT, "/v1/link/request", Some(&token), &json!({ "requestId": "q1", "kind": "projects" })), PORT, now);
+        assert_eq!(response.status, 200);
+        let Some(Effect::AwaitLink { request_id, kind, receiver }) = effect else { panic!("expected a waiting request") };
+        assert_eq!((request_id.as_str(), kind.as_str()), ("q1", "projects"));
+        assert_eq!(bridge.lock().unwrap().link.take(now).len(), 1);
+        bridge.lock().unwrap().link.answer("q1", json!({ "ok": true, "result": { "projects": [] } })).unwrap();
+        assert_eq!(receiver.0.recv().unwrap()["ok"], true);
+        // Unknown kinds never reach the webview.
+        assert_eq!(route(&bridge, &post_as(EXT, "/v1/link/request", Some(&token), &json!({ "requestId": "q2", "kind": "exec" })), PORT, now).0.status, 400);
+        // GET is not a way in.
+        assert_eq!(route(&bridge, &request("GET", "/v1/link/status", &[("authorization", &format!("Bearer {token}"))], b""), PORT, now).0.status, 405);
+        // The extension forgetting the link revokes it here too.
+        assert_eq!(route(&bridge, &post_as(EXT, "/v1/link/forget", Some(&token), &json!({})), PORT, now).0.status, 200);
+        assert_eq!(route(&bridge, &post_as(EXT, "/v1/link/status", Some(&token), &json!({})), PORT, now).0.status, 401);
+    }
+
+    #[test]
+    fn another_extension_cannot_collect_a_pairing() {
+        let bridge = Mutex::new(Bridge::default());
+        let now = Instant::now();
+        let begun = route(&bridge, &post_as(EXT, "/v1/pair", None, &json!({})), PORT, now).0;
+        let id = begun.body["pairingId"].as_str().unwrap().to_string();
+        bridge.lock().unwrap().link.answer_pairing(&id, true, now).unwrap();
+        let other = "chrome-extension://ponmlkjihgfedcbaponmlkjihgfedcba";
+        assert_eq!(route(&bridge, &post_as(other, &format!("/v1/pair/{id}/status"), None, &json!({})), PORT, now).0.status, 404);
+        assert_eq!(route(&bridge, &post_as(EXT, &format!("/v1/pair/{id}/status"), None, &json!({})), PORT, now).0.body["status"], "approved");
+        let hello = route(&bridge, &request("GET", "/v1/hello", &[], b""), PORT, now).0;
+        assert_eq!(hello.body["link"], 1);
     }
 
     #[test]

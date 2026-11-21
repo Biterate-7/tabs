@@ -1,18 +1,21 @@
 # Releasing Hubble Desktop
 
-How a Windows installer gets from this repository to the "Download Hubble"
-button on `/download`. Nothing in this chain publishes on its own: the
-workflow drafts, a person publishes, and a reviewed pull request turns the
-website's link on.
+How installers get from this repository to the "Download Hubble" button on
+the website. Nothing in this chain publishes on its own: the workflow drafts,
+a person publishes, and the website follows what was published.
 
 ```text
+version bump (package.json, src-tauri/tauri.conf.json, src-tauri/Cargo.toml)
+    ↓  + docs/release-notes/X.Y.Z.md
 tag desktop-vX.Y.Z
-    ↓  .github/workflows/desktop-release.yml (windows-latest, release profile)
-DRAFT GitHub Release  ←  Hubble_X.Y.Z_x64-setup.exe + .sha256
-    ↓  a person installs it on a clean Windows machine and checks it
+    ↓  .github/workflows/desktop-release.yml (release profile, three runners)
+DRAFT GitHub Release  ←  Hubble_X.Y.Z_x64-setup.exe, Hubble_X.Y.Z_x64_en-US.msi,
+                         Hubble_X.Y.Z_universal.dmg, Hubble_X.Y.Z_amd64.AppImage,
+                         Hubble_X.Y.Z_amd64.deb, SHA256SUMS.txt
+    ↓  a person installs each one on a clean machine and checks it
 PUBLISHED GitHub Release
-    ↓  pull request: src/lib/desktop/release.ts → windows: "published"
-hubble-hq.vercel.app/download → /api/download?platform=windows
+    ↓  within 10 minutes (ISR + the GitHub Releases API; src/lib/desktop/release-source.ts)
+hubblehq.vercel.app  /  /download  →  /api/download?platform=…[&format=…&arch=…]
     ↓  +1 to the aggregate count, then 302
 the GitHub Release asset
 ```
@@ -21,78 +24,87 @@ Installers are never committed to Git and never served from Vercel.
 
 ## 1. Build a draft
 
-1. Make sure `version` in `src-tauri/tauri.conf.json` is the version you are
-   releasing.
-2. Tag the commit and push the tag:
+1. Bump `version` in `package.json`, `src-tauri/tauri.conf.json` and
+   `src-tauri/Cargo.toml` (the workflow refuses a tag they don't all match),
+   and write `docs/release-notes/X.Y.Z.md` — it becomes the top of the
+   release notes the download page shows.
+2. Merge, then tag the merge commit and push the tag:
 
    ```bash
-   git tag desktop-v0.1.0
-   git push origin desktop-v0.1.0
+   git tag desktop-v0.2.0
+   git push origin desktop-v0.2.0
    ```
 
    Or run **Actions → Desktop release → Run workflow** with an existing tag.
-3. The workflow refuses a tag that does not match `tauri.conf.json`, builds
-   with `tauri build --bundles nsis` (release profile — never `--debug`), and
-   creates a **draft** release with the installer and its SHA-256.
+3. The workflow builds with `tauri build --bundles …` (release profile — never
+   `--debug`) on Windows, macOS (universal: Apple silicon and Intel) and
+   Ubuntu 22.04, and creates a **draft** release with every installer and a
+   `SHA256SUMS.txt`. A pull request that touches the app has already built all
+   three (`desktop-build.yml`), so a tag should not discover a broken platform.
 
-The build receives no secrets, and the app bundles no credentials.
+The build receives no secrets except optional Apple signing secrets (below),
+and the app bundles no credentials.
 
 ## 2. Check the draft before publishing
 
-Download the installer from the draft and, on a Windows 10 or 11 machine
-that has never had Hubble:
+On a machine that has never had Hubble, for each OS:
 
-- [ ] The SHA-256 matches the `.sha256` file.
-- [ ] The installer and the Start menu entry say **Hubble**, with the Hubble icon.
-- [ ] Hubble opens to the app (not a dev server, no devtools).
-- [ ] Settings → Desktop app says "You're running Hubble Desktop", shows the
-      version you tagged, "Windows · 64-bit" and "Release" under Diagnostics.
-- [ ] Projects, Search, Graph and Settings open; a new project can be made
-      and a note written in it.
-- [ ] Settings → AI apps lists ChatGPT, Claude, Gemini and Perplexity with
-      what works on desktop.
-- [ ] Hubble for Chrome's *Send to Hubble Desktop* delivers tabs.
+- [ ] The checksum matches `SHA256SUMS.txt` (GitHub also shows each asset's digest).
+- [ ] The installer, the Start menu / Applications / app menu entry say **Hubble**, with the Hubble icon.
+- [ ] Hubble opens to the app (not a dev server, no devtools) and to "Welcome to Hubble" on a first launch.
+- [ ] Settings → Desktop app shows the version you tagged and "Release".
+- [ ] A project can be made and a note written in it; quit and reopen — it is still there.
+- [ ] Hubble for Chrome: **Connect to Hubble Desktop** shows the same code in the popup and in Hubble; Connect; the popup then lists your projects.
+- [ ] Save a ChatGPT conversation into a project from the popup; it appears in Hubble.
+- [ ] Quit Hubble, save another conversation: the popup says it's waiting; open Hubble — it arrives within a minute.
+- [ ] Settings → Account → Sign in opens the browser and returns signed in.
 
-Then publish the draft on GitHub.
+Then publish the draft on GitHub. **That is the whole website change**: `/`,
+`/download`, `/api/download` and `/api/desktop/release` read the newest
+published `desktop-v*` release (drafts and prereleases are never read) and
+take only installer file names Tauri produces for that version
+(`src/lib/desktop/artifacts.ts`). A platform with no installer in the release
+shows "Not available yet" and offers nothing.
 
-## 3. Turn on the website's download
+`src/lib/desktop/release.ts` `DESKTOP_BUILDS` is now only the fallback used
+when GitHub can't be reached. Update its Windows entry to the new version and
+checksum in a follow-up pull request so the fallback is current.
 
-First make sure the download-count table exists in the production database
-(once per database; it is idempotent):
-
-```bash
-node --env-file=<file holding the production POSTGRES_URL> scripts/migrate-downloads.mjs --expect-host=<ep-… endpoint or host>
-```
-
-Without it, downloads still redirect, and each one logs
-`[downloads] could not count …` in the Vercel function logs.
-
-In `src/lib/desktop/release.ts` change:
-
-```ts
-windows: { status: "unpublished" },
-```
-
-to the published version and the checksum from the release:
-
-```ts
-windows: { status: "published", version: "0.1.0", sha256: "<64 hex characters>" },
-```
-
-`release.test.ts` fails if the version does not match `tauri.conf.json`.
-After the pull request deploys, check the endpoint. `curl` is never counted
-(it is treated as automated), so these checks do not change the numbers:
+After publishing, check (curl is never counted):
 
 ```bash
-curl -sI "https://hubble-hq.vercel.app/api/download?platform=windows"
-curl -sI "https://hubble-hq.vercel.app/api/download?platform=banana"
-curl -sIL https://github.com/Biterate-7/tabs/releases/download/desktop-v0.1.0/Hubble_0.1.0_x64-setup.exe
+curl -s https://hubblehq.vercel.app/api/desktop/release
+curl -sI "https://hubblehq.vercel.app/api/download?platform=windows"
+curl -sI "https://hubblehq.vercel.app/api/download?platform=macos"
+curl -sI "https://hubblehq.vercel.app/api/download?platform=linux&format=deb"
 ```
 
-The first answers `302` with `Location` set to the release asset; the second
-answers `400` with no `Location`; the third ends in `200`.
+Each answers `302` to the release asset (or `404` for a platform the release
+doesn't have).
 
-## 4. Download counts
+## 3. Code signing
+
+Not set up: there are no certificates. Until there are, Windows SmartScreen
+("Windows protected your PC") and macOS Gatekeeper warn on first run. Do not
+tell people to bypass the warning in product copy.
+
+- **macOS:** add repository secrets `APPLE_CERTIFICATE` (base64 .p12),
+  `APPLE_CERTIFICATE_PASSWORD`, `APPLE_SIGNING_IDENTITY`, and for
+  notarization `APPLE_ID`, `APPLE_PASSWORD` (app-specific), `APPLE_TEAM_ID`.
+  The release workflow exports them only when set; Tauri then signs and
+  notarizes the `.dmg`.
+- **Windows:** a code-signing certificate (or Azure Trusted Signing) and
+  `bundle.windows.certificateThumbprint` / `signCommand` in `tauri.conf.json`.
+
+## 4. Automatic updates
+
+Not implemented. Settings → Desktop app *checks*: it reads
+`GET /api/desktop/release` on the deployed site and, when a newer version is
+published, links its installer and release page; the person installs it. A
+real updater (`tauri-plugin-updater`) needs an update-signing key pair (the
+private key as a CI secret) and a signed `latest.json` on each release.
+
+## 5. Download counts
 
 `/api/download` adds one to a row per (UTC day, platform, version) in
 `tabdump_desktop_downloads` and stores nothing else — no IP address, user
@@ -119,67 +131,3 @@ The download URL is built from the version alone. It always names this
 repository's GitHub Releases, and `isOfficialReleaseUrl` refuses anything
 else.
 
-## Releasing 0.2.0 (desktop accounts, sync, connectors, the relay)
-
-The app version is already **0.2.0** in `package.json`, `tauri.conf.json`
-and `Cargo.toml`; `release.ts` still publishes **0.1.0** until 0.2.0 is
-published (`release.test.ts` allows the app to be one version ahead,
-never behind). In this order, each step done by a person:
-
-1. **Database, before the web deploy.** Desktop sign-in needs the new
-   `tabdump_device_sessions` table. The auth schema is additive and
-   idempotent:
-
-   ```bash
-   node --env-file=<file holding the production POSTGRES_URL> scripts/migrate-auth.mjs --expect-host=<ep-… endpoint or host>
-   ```
-
-   Without it, `/api/auth/desktop/*` answer 500 and desktop sign-in fails;
-   nothing else on the website is affected (the bearer path is only taken
-   when an `Authorization` header is present).
-2. **Deploy the website** (merge to `main`). This ships
-   `/desktop/connect`, `/desktop/relay`, `/api/auth/desktop/*`,
-   `/api/desktop/release`, and the Hubble for Chrome **0.9.0** ZIP (the
-   relay's `deliver_to_desktop`). Check:
-
-   ```bash
-   curl -s https://hubble-hq.vercel.app/api/desktop/release
-   curl -s -o /dev/null -w "%{http_code}\n" https://hubble-hq.vercel.app/desktop/connect
-   ```
-
-   An installed 0.1.0 can't use any of this — it predates it — but a 0.2.0
-   build can be tested against production from here on.
-3. **Tag and draft:** `git tag desktop-v0.2.0 && git push origin desktop-v0.2.0`
-   (section 1). The workflow builds a release-profile NSIS installer.
-4. **Check the draft** (section 2), plus: Settings → Account → Sign in opens
-   the browser, Connect returns to the app signed in; Settings → Desktop
-   app shows 0.2.0; Sessions → Save current session opens the relay page;
-   Settings → Account on the web lists the desktop and Disconnect signs it
-   out.
-5. **Publish**, then change `windows` in `release.ts` to
-   `{ status: "published", version: "0.2.0", sha256, bytes }` (section 3).
-   Installed 0.2.0 apps then report "You have the latest version"; nothing
-   tells a 0.1.0 install to update, since 0.1.0 has no update check.
-
-No new Google configuration is needed: sign-in happens on the website's
-own, already-authorized origin. `hubble://` is already registered by the
-installer.
-
-## Not done yet
-
-- **Code signing.** The installer is unsigned, so Windows SmartScreen warns
-  on first run ("Windows protected your PC"). Signing needs a certificate
-  (or Azure Trusted Signing) and `bundle.windows.certificateThumbprint` /
-  `signCommand` in `tauri.conf.json`. Do not tell users to bypass the
-  warning in product copy.
-- **macOS and Linux.** `tauri.conf.json` bundles Windows formats only. The
-  site says macOS is "Coming soon" and Linux is "Not available" until a
-  build exists and is published the same way.
-- **Auto-update.** There is no updater; each version is a new download.
-  Settings → Desktop app *checks* for one: it reads
-  `GET /api/desktop/release` on the deployed site (this table, served with
-  `Access-Control-Allow-Origin: *`) and, when a newer version is published,
-  links its installer through `/api/download` and its release page. The
-  person downloads and runs it; Hubble never installs anything itself. A
-  real updater (`tauri-plugin-updater`) needs an update-signing key pair held
-  as a CI secret and a signed `latest.json` on each release — not set up.
