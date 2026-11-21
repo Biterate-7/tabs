@@ -16,7 +16,6 @@ import { ActivityRow } from "@/components/intelligence/activity-row"
 import { ContextOnboardingDialog } from "@/components/intelligence/context-onboarding"
 import { useContextSettingsView, useContextState } from "@/hooks/use-context-intelligence"
 import { useBrowserConnected } from "@/hooks/use-tab-sessions"
-import { useIsDesktop } from "@/hooks/use-is-desktop"
 import { useNow } from "@/hooks/use-now"
 import { clearActivity, forgetActivity } from "@/lib/intelligence/bridge"
 import { forgetRecords } from "@/lib/intelligence/decisions"
@@ -53,7 +52,6 @@ const PREFERENCE_OPTIONS: { value: SuggestionPreference; label: string }[] = [
 const HOUR = 60 * 60 * 1000
 
 export function ContextSection() {
-  const isDesktop = useIsDesktop()
   const connected = useBrowserConnected()
   const view = useContextSettingsView()
   const state = useContextState()
@@ -117,9 +115,7 @@ export function ContextSection() {
   }
 
   const records = state.records
-  const status: { label: string; tone: "success" | "default" } = isDesktop
-    ? { label: "Chrome only", tone: "default" }
-    : !connected
+  const status: { label: string; tone: "success" | "default" } = !connected
       ? { label: "Not connected", tone: "default" }
       : view.status === "unavailable" && view.error === "needs-update"
         ? { label: "Update needed", tone: "default" }
@@ -131,7 +127,7 @@ export function ContextSection() {
               ? { label: "Paused", tone: "default" }
               : { label: "On", tone: "success" }
 
-  const editable = !isDesktop && connected && Boolean(settings) && !busy
+  const editable = connected && Boolean(settings) && !busy
 
   return (
     <div>
@@ -141,9 +137,7 @@ export function ContextSection() {
         <FieldRow
           label="Context detection"
           description={
-            isDesktop
-              ? "Detection runs in Hubble for Chrome on the web. Open Hubble in Chrome to set it up."
-              : !connected
+            !connected
                 ? "Connect Hubble for Chrome to set this up."
                 : view.status === "unavailable" && view.error === "needs-update"
                   ? "Your Hubble for Chrome is older than this feature. Download the latest from Settings → Chrome extension."
@@ -158,7 +152,7 @@ export function ContextSection() {
         >
           <Badge variant={status.tone === "success" ? "success" : "default"}>{status.label}</Badge>
         </FieldRow>
-        {settings && !isDesktop && (
+        {settings && (
           <>
             <FieldRow label="Mode" description={settings.mode === "auto" ? "Any ordinary site, except sensitive ones and those you exclude." : settings.mode === "sites" ? "Only the kinds of site ticked below." : "Nothing is detected. Saving by hand works as always."} stacked>
               <SegmentedControl label="Mode" value={settings.mode} options={MODE_OPTIONS} onValueChange={(mode) => editable && void change({ mode, decidedAt: settings.decidedAt ?? Date.now() })} />
@@ -194,7 +188,7 @@ export function ContextSection() {
             )}
           </>
         )}
-        {settings && !settings.decidedAt && !isDesktop && (
+        {settings && !settings.decidedAt && (
           <GroupBlock>
             <Button type="button" size="sm" onClick={() => setOnboarding(true)}>
               Set up
@@ -203,7 +197,7 @@ export function ContextSection() {
         )}
       </SectionStack>
 
-      {settings && !isDesktop && settings.mode !== "off" && (
+      {settings && settings.mode !== "off" && (
         <>
           <GroupLabel>Read AI conversations</GroupLabel>
           <SectionStack className="mb-6">
@@ -236,7 +230,7 @@ export function ContextSection() {
         </FieldRow>
       </SectionStack>
 
-      {settings && !isDesktop && (
+      {settings && (
         <>
           <GroupLabel>Never detect</GroupLabel>
           <SectionStack className="mb-6">

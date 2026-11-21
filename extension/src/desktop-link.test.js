@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { LINK_KEY, LINK_REQUEST_KINDS, createDesktopLink, describePairState, formatCode } from "./desktop-link.js";
+import { DESKTOP_COMMAND_ACTIONS, LINK_KEY, LINK_REQUEST_KINDS, createDesktopLink, describePairState, formatCode, linkProof } from "./desktop-link.js";
 
 const TOKEN = "b".repeat(64);
 
@@ -21,6 +21,7 @@ function desktop({ running = true, known = new Set([TOKEN]), pairing = "approved
     if (pathname === "/v1/pair/p1/status") {
       return state.pairing === "approved" ? json(200, { status: "approved", token: TOKEN, linkId: "l1" }) : json(200, { status: state.pairing, code: "482913" });
     }
+    if (pathname === "/v1/link/prove") return json(200, { proofs: await Promise.all([...state.known].map((known) => linkProof(known, Number(port), body.challenge))) });
     if (pathname.startsWith("/v1/link/") && !state.known.has(token)) return json(401, { ok: false, reason: "not-paired" });
     if (pathname === "/v1/link/status") return json(200, { paired: true, ready: true, version: "0.3.0" });
     if (pathname === "/v1/link/forget") {
@@ -28,6 +29,9 @@ function desktop({ running = true, known = new Set([TOKEN]), pairing = "approved
       return json(200, { ok: true });
     }
     if (pathname === "/v1/link/request") return json(200, answer(body));
+    if (pathname === "/v1/link/commands") return state.commands ? json(200, { commands: state.commands.splice(0) }) : json(404, {});
+    if (pathname === "/v1/link/result") return json(200, { ok: true });
+    if (pathname === "/v1/link/nudge") return json(200, { ok: true });
     return json(404, {});
   });
   return { state, fetch };
@@ -140,5 +144,54 @@ describe("desktop link", () => {
     expect(describePairState(undefined)).toBeUndefined();
     expect(LINK_KEY).toBe("hubble_desktop_link");
     expect(LINK_REQUEST_KINDS).toContain("add-sources");
+  });
+});
+
+describe("commands from Hubble Desktop", () => {
+  const paired = () => memoryStorage({ token: TOKEN, linkId: "l1", pairedAt: 1 });
+
+  it("collects them with the token, keeping only well-formed ones on the allowlist", async () => {
+    const { state, fetch } = desktop();
+    state.commands = [
+      { id: "aa01", action: "list_browser_tabs", args: {} },
+      { id: "aa02", action: "get_history" },
+      { id: "aa03", action: "close_tabs", args: { tabIds: [1] } },
+      { id: "../x", action: "list_browser_tabs", args: {} },
+      { id: "aa05", action: "open_url", args: [] },
+    ];
+    const link = createDesktopLink({ storage: paired(), fetch, sleep });
+    const collected = await link.collectCommands();
+    expect(collected).toEqual({
+      ok: true,
+      port: 41517,
+      commands: [
+        { id: "aa01", action: "list_browser_tabs", args: {} },
+        { id: "aa02", action: "get_history", args: {} },
+      ],
+    });
+    expect(state.calls.find((call) => call.pathname === "/v1/link/commands").token).toBe(TOKEN);
+    expect(DESKTOP_COMMAND_ACTIONS).not.toContain("close_tabs");
+  });
+
+  it("answers, nudges, and treats an older Hubble Desktop as having nothing to ask", async () => {
+    const { state, fetch } = desktop();
+    const link = createDesktopLink({ storage: paired(), fetch, sleep });
+    expect(await link.collectCommands()).toEqual({ ok: true, commands: [], port: 41517 });
+    expect(await link.sendResult(41517, { id: "aa01", ok: false, error: "x".repeat(500) })).toBe(true);
+    const sent = state.calls.find((call) => call.pathname === "/v1/link/result").body;
+    expect(sent).toEqual({ id: "aa01", ok: false, error: "x".repeat(300) });
+    expect(await link.nudge()).toBe(true);
+  });
+
+  it("forgets a token Hubble refuses, and asks nothing when unpaired or Hubble is closed", async () => {
+    const { state, fetch } = desktop({ known: new Set() });
+    const storage = paired();
+    const link = createDesktopLink({ storage, fetch, sleep });
+    expect(await link.collectCommands()).toEqual({ ok: false, error: "not-paired" });
+    expect(storage.peek()).toBeUndefined();
+    expect(await createDesktopLink({ storage: memoryStorage(undefined), fetch, sleep }).collectCommands()).toEqual({ ok: false, error: "not-paired" });
+    state.running = false;
+    expect(await createDesktopLink({ storage: paired(), fetch, sleep }).collectCommands()).toEqual({ ok: false, error: "desktop-not-running" });
+    expect(await createDesktopLink({ storage: paired(), fetch, sleep }).nudge()).toBe(false);
   });
 });

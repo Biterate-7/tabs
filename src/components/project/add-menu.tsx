@@ -170,7 +170,7 @@ function BrowserTabsDialog({
 
   useEffect(() => {
     let alive = true
-    // Through the browser in Hubble Desktop, where the person approves it first (readChromeTabs).
+    // Hubble Desktop asks the paired Hubble for Chrome (readChromeTabs).
     void readChromeTabs().then((result) => {
       if (!alive) return
       if (!result.ok) {

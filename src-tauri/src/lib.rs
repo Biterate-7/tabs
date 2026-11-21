@@ -11,6 +11,7 @@
 
 mod commands;
 mod account;
+mod durable_store;
 mod extension_link;
 mod import_bridge;
 
@@ -72,20 +73,21 @@ pub fn run() {
             commands::app_info,
             import_bridge::desktop_import_take,
             import_bridge::desktop_import_finish,
-            import_bridge::desktop_relay_begin,
-            import_bridge::desktop_relay_take,
-            import_bridge::desktop_relay_cancel,
             import_bridge::desktop_pair_pending,
             import_bridge::desktop_pair_answer,
             import_bridge::desktop_link_list,
             import_bridge::desktop_link_revoke,
             import_bridge::desktop_link_take,
             import_bridge::desktop_link_answer,
+            import_bridge::desktop_link_paired,
+            import_bridge::desktop_link_command,
             account::account_status,
             account::account_sign_in_begin,
             account::account_sign_in_complete,
             account::account_sign_out,
-            account::account_request
+            account::account_request,
+            durable_store::durable_store_read,
+            durable_store::durable_store_write
         ])
         .setup(|app| {
             let handle = app.handle().clone();
@@ -100,6 +102,8 @@ pub fn run() {
             }
             app.manage(import_bridge::ImportBridgeState(Arc::clone(&bridge)));
             app.manage(account::AccountState::default());
+            // localStorage's durable copy (durable_store.rs), restored by the webview before the app reads anything.
+            app.manage(durable_store::DurableStoreState(app.path().app_data_dir().ok().map(|dir| dir.join("durable-store"))));
             import_bridge::start(app.handle().clone(), bridge);
 
             // The installer registers `hubble://`; a development build

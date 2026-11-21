@@ -41,6 +41,48 @@
 //! schema (src/lib/memory/extension-protocol.ts) before acting, exactly as it
 //! did when a content script carried the same requests into the website.
 //!
+//! # Commands from Hubble
+//!
+//! The other direction: Hubble Desktop asking Chrome — the tabs open now (save
+//! a session, organize, add tabs), a history range (History Dump), opening a
+//! saved session in a window, context detection's settings and activity. The
+//! app cannot call an extension, so the paired extension collects them:
+//!
+//! ```text
+//! webview ── desktop_link_command(action, args) ──▶ queued here (allowlisted action, object args)
+//! extension ── POST /v1/link/commands  Bearer ────▶ { commands: [{ id, action, args }] }   (marks them taken by this link)
+//! extension ── POST /v1/link/result    Bearer ────▶ { id, ok, result | error }  → the webview's await resolves
+//! ```
+//!
+//! An asleep extension (Chrome stops idle service workers) is woken by opening
+//! `http://127.0.0.1:<port>/v1/wake` in the default browser — the extension
+//! notices that address, closes the tab and collects. The wake carries
+//! nothing: commands only ever travel over the authenticated link, so a page
+//! or another extension can neither read nor inject one. Only a command the
+//! person just asked for wakes Chrome; background reads (context detection's
+//! pull) wait for the extension to come by on its own, which it does after
+//! each nudge (`POST /v1/link/nudge`, "something changed").
+//!
+//! Before this channel, the same questions went through a page on Hubble's
+//! website (the "relay"), which made the app depend on the website and asked
+//! the person to press Send there each time.
+//!
+//! # Hubble proves itself first
+//!
+//! Nothing stops another program from listening on Hubble's ports while Hubble
+//! is closed (or from starting first) — on a shared computer, another person's
+//! account can. So the extension never sends its token, or anything it read,
+//! to a port before that port proves it holds the link:
+//!
+//! ```text
+//! extension ── POST /v1/link/prove { challenge } ──▶ { proofs: [HMAC(token_hash_i, "hubble-link-proof:v1:<port>:<challenge>")] }
+//! ```
+//!
+//! The extension computes the same HMAC from SHA-256 of its own token and only
+//! talks to a port whose answer contains it. The proof is bound to the port and
+//! a fresh challenge, so it can't be replayed from elsewhere, and it reveals
+//! nothing about the token.
+//!
 //! Nothing here is ever logged except ids, kinds and outcomes.
 
 use std::collections::HashMap;
@@ -73,6 +115,36 @@ const MAX_LABEL_CHARS: usize = 60;
 /// src/lib/memory/extension-protocol.ts, plus `add-sources` (tabs into a
 /// chosen project). Mirrors `LINK_REQUEST_KINDS` in extension/src/desktop-link.js.
 pub const LINK_REQUEST_KINDS: [&str; 8] = ["projects", "capture", "saved", "search", "bundle", "reused", "save-session", "add-sources"];
+
+/// Emitted when the paired extension says something it keeps changed (context detection's activity).
+pub const LINK_NUDGE_EVENT: &str = "hubble-link:nudge";
+
+/// What Hubble may ask the paired extension — the browser commands of
+/// src/lib/browser/protocol.ts that Hubble Desktop uses, and nothing else.
+/// Mirrors `DESKTOP_COMMAND_ACTIONS` in extension/src/browser-commands.js,
+/// which validates every argument again before Chrome is touched.
+pub const LINK_COMMAND_ACTIONS: [&str; 13] = [
+    "list_browser_tabs",
+    "list_browser_windows",
+    "get_history",
+    "open_url",
+    "open_tabs",
+    "open_session",
+    "get_context_settings",
+    "set_context_settings",
+    "request_context_access",
+    "get_context_activity",
+    "forget_context_activity",
+    "clear_context_activity",
+    "capture_context_conversation",
+];
+/// The longest a command may wait for the extension (a History Dump scan, a permission prompt).
+pub const MAX_COMMAND_TTL: Duration = Duration::from_secs(120);
+/// The extension came by this recently: it is awake and will collect without a wake.
+pub const AWAKE_WINDOW: Duration = Duration::from_secs(4);
+const MAX_WAITING_COMMANDS: usize = 16;
+/// Arguments are small (a history range, a list of addresses to open, a settings patch).
+const MAX_COMMAND_ARGS_BYTES: usize = 64 * 1024;
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -109,6 +181,16 @@ struct WaitingRequest {
     taken: bool,
 }
 
+/// A command from Hubble waiting for (or being run by) the paired extension.
+struct WaitingCommand {
+    action: &'static str,
+    args: Value,
+    answer: SyncSender<Value>,
+    deadline: Instant,
+    /// The link that collected it; only that link may answer.
+    taken_by: Option<String>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LinkRefusal {
     Unauthorized,
@@ -143,6 +225,9 @@ pub struct Link {
     links: Vec<PairedLink>,
     pairs: HashMap<String, PendingPair>,
     waiting: HashMap<String, WaitingRequest>,
+    commands: HashMap<String, WaitingCommand>,
+    /// When a paired extension last collected commands.
+    last_collect: Option<Instant>,
     path: Option<PathBuf>,
 }
 
@@ -158,6 +243,29 @@ fn hash_token(token: &str) -> String {
 
 fn same(a: &str, b: &str) -> bool {
     a.len() == b.len() && a.bytes().zip(b.bytes()).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
+}
+
+fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// HMAC-SHA-256 (RFC 2104), on the sha2 crate already used here.
+pub fn hmac_sha256(key: &[u8], message: &[u8]) -> [u8; 32] {
+    const BLOCK: usize = 64;
+    let mut block = [0u8; BLOCK];
+    if key.len() > BLOCK {
+        block[..32].copy_from_slice(&Sha256::digest(key));
+    } else {
+        block[..key.len()].copy_from_slice(key);
+    }
+    let mut inner = Sha256::new();
+    inner.update(block.iter().map(|b| b ^ 0x36).collect::<Vec<u8>>());
+    inner.update(message);
+    let inner = inner.finalize();
+    let mut outer = Sha256::new();
+    outer.update(block.iter().map(|b| b ^ 0x5c).collect::<Vec<u8>>());
+    outer.update(inner);
+    outer.finalize().into()
 }
 
 fn now_ms() -> u64 {
@@ -222,6 +330,14 @@ impl Link {
         for id in expired {
             if let Some(waiting) = self.waiting.remove(&id) {
                 let _ = waiting.answer.try_send(json!({ "ok": false, "error": "timed-out" }));
+            }
+        }
+        // A command nobody collected (Chrome closed, the default browser isn't Chrome) or nobody answered.
+        let expired: Vec<String> = self.commands.iter().filter(|(_, c)| c.deadline <= now).map(|(id, _)| id.clone()).collect();
+        for id in expired {
+            if let Some(command) = self.commands.remove(&id) {
+                let error = if command.taken_by.is_some() { "timed-out" } else { "extension-unreachable" };
+                let _ = command.answer.try_send(json!({ "ok": false, "error": error }));
             }
         }
     }
@@ -350,6 +466,7 @@ impl Link {
         let before = self.links.len();
         self.links.retain(|link| link.id != link_id);
         if self.links.len() != before {
+            self.drop_commands_of(link_id);
             self.save();
         }
     }
@@ -374,9 +491,115 @@ impl Link {
                     let _ = waiting.answer.try_send(json!({ "ok": false, "error": "not-paired" }));
                 }
             }
+            self.drop_commands_of(link_id);
             self.save();
         }
         removed
+    }
+
+    fn drop_commands_of(&mut self, link_id: &str) {
+        let dropped: Vec<String> = self.commands.iter().filter(|(_, c)| c.taken_by.as_deref() == Some(link_id)).map(|(id, _)| id.clone()).collect();
+        for id in dropped {
+            if let Some(command) = self.commands.remove(&id) {
+                let _ = command.answer.try_send(json!({ "ok": false, "error": "not-paired" }));
+            }
+        }
+    }
+
+    /// This app's answer to an extension's challenge: one HMAC per paired link,
+    /// keyed by that link's stored token hash and bound to the port it answers on.
+    /// The asking extension recognises its own; nobody else can make one.
+    pub fn proofs(&self, challenge: &str, port: u16) -> Result<Vec<String>, LinkRefusal> {
+        if !(32..=128).contains(&challenge.len()) || !challenge.bytes().all(|b| b.is_ascii_hexdigit()) {
+            return Err(LinkRefusal::Invalid);
+        }
+        let message = format!("hubble-link-proof:v1:{port}:{challenge}");
+        Ok(self.links.iter().map(|link| hex(&hmac_sha256(link.token_hash.as_bytes(), message.as_bytes()))).collect())
+    }
+
+    /// Whether any extension is paired at all.
+    pub fn is_paired(&self) -> bool {
+        !self.links.is_empty()
+    }
+
+    /* ---------------- commands from Hubble ---------------- */
+
+    /// Queues one command for the paired extension. Refused when nothing is
+    /// paired, for an action outside LINK_COMMAND_ACTIONS, for arguments that
+    /// aren't a small object, and when too many are already waiting.
+    pub fn queue_command(&mut self, action: &str, args: Value, ttl: Duration, now: Instant) -> Result<(String, Receiver<Value>), String> {
+        self.sweep(now);
+        if self.links.is_empty() {
+            return Err("not-paired".into());
+        }
+        let action = LINK_COMMAND_ACTIONS.iter().copied().find(|known| *known == action).ok_or("unknown-action")?;
+        let args = match args {
+            Value::Null => json!({}),
+            Value::Object(_) => args,
+            _ => return Err("invalid".into()),
+        };
+        if args.to_string().len() > MAX_COMMAND_ARGS_BYTES {
+            return Err("invalid".into());
+        }
+        if self.commands.len() >= MAX_WAITING_COMMANDS {
+            return Err("busy".into());
+        }
+        let id = random_hex(12);
+        let (sender, receiver) = sync_channel(1);
+        let ttl = ttl.min(MAX_COMMAND_TTL);
+        self.commands.insert(id.clone(), WaitingCommand { action, args, answer: sender, deadline: now + ttl, taken_by: None });
+        Ok((id, receiver))
+    }
+
+    /// The paired extension collecting what waits for it. Each command is handed to one link, once.
+    pub fn collect_commands(&mut self, link_id: &str, now: Instant) -> Vec<Value> {
+        self.sweep(now);
+        self.last_collect = Some(now);
+        let mut collected = Vec::new();
+        for (id, command) in self.commands.iter_mut() {
+            if command.taken_by.is_none() {
+                command.taken_by = Some(link_id.to_string());
+                collected.push(json!({ "id": id, "action": command.action, "args": command.args }));
+            }
+        }
+        collected.sort_by(|a, b| a["id"].as_str().cmp(&b["id"].as_str()));
+        collected
+    }
+
+    /// The extension's answer to a command it collected: `{ id, ok: true, result }` or `{ id, ok: false, error }`.
+    pub fn finish_command(&mut self, link_id: &str, body: &[u8]) -> Result<String, LinkRefusal> {
+        let value: Value = serde_json::from_slice(body).map_err(|_| LinkRefusal::Invalid)?;
+        let object = value.as_object().ok_or(LinkRefusal::Invalid)?;
+        let id = object.get("id").and_then(Value::as_str).filter(|id| is_request_id(id)).ok_or(LinkRefusal::Invalid)?;
+        let ok = object.get("ok").and_then(Value::as_bool).ok_or(LinkRefusal::Invalid)?;
+        // Only the link that collected it answers; anything else is as if it didn't exist.
+        if self.commands.get(id).and_then(|c| c.taken_by.as_deref()) != Some(link_id) {
+            return Err(LinkRefusal::NotFound);
+        }
+        let command = self.commands.remove(id).ok_or(LinkRefusal::NotFound)?;
+        let answer = if ok {
+            json!({ "ok": true, "result": object.get("result").cloned().unwrap_or(Value::Null) })
+        } else {
+            let error: String = object.get("error").and_then(Value::as_str).unwrap_or("failed").chars().take(300).collect();
+            json!({ "ok": false, "error": error })
+        };
+        let _ = command.answer.try_send(answer);
+        Ok(id.to_string())
+    }
+
+    /// Whether a paired extension collected commands within AWAKE_WINDOW.
+    pub fn extension_awake(&self, now: Instant) -> bool {
+        self.last_collect.is_some_and(|at| now.saturating_duration_since(at) < AWAKE_WINDOW)
+    }
+
+    /// Whether a command has been collected (and so needs no wake).
+    pub fn command_collected(&self, id: &str) -> bool {
+        self.commands.get(id).is_some_and(|c| c.taken_by.is_some())
+    }
+
+    /// The app gave up waiting: forget the command (a late answer is refused).
+    pub fn abandon_command(&mut self, id: &str) {
+        self.commands.remove(id);
     }
 
     /* ---------------- paired requests ---------------- */
@@ -617,5 +840,124 @@ mod tests {
         std::fs::write(&path, b"{ not json").unwrap();
         assert!(Link::load(path.clone()).list().is_empty());
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn hmac_matches_rfc_4231() {
+        // Test case 2.
+        assert_eq!(hex(&hmac_sha256(b"Jefe", b"what do ya want for nothing?")), "5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843");
+        // Test case 6: a key longer than the block.
+        assert_eq!(
+            hex(&hmac_sha256(&[0xaa; 131], b"Test Using Larger Than Block-Size Key - Hash Key First")),
+            "60e431591ee0b67f0d8a26aacbf5b77f8e0bc6213728c5140546040f0ee37f54"
+        );
+    }
+
+    #[test]
+    fn the_proof_is_the_tokens_hmac_bound_to_port_and_challenge() {
+        let mut link = Link::default();
+        let now = Instant::now();
+        let challenge = "c".repeat(32);
+        assert_eq!(link.proofs(&challenge, 41517), Ok(vec![]));
+        let (token, _) = paired(&mut link, now);
+        let proofs = link.proofs(&challenge, 41517).unwrap();
+        let expected = hex(&hmac_sha256(hash_token(&token).as_bytes(), format!("hubble-link-proof:v1:41517:{challenge}").as_bytes()));
+        assert_eq!(proofs, vec![expected.clone()]);
+        assert!(!link.proofs(&challenge, 41518).unwrap().contains(&expected));
+        assert!(!link.proofs(&"d".repeat(32), 41517).unwrap().contains(&expected));
+        for bad in ["", "short", &"z".repeat(32), &"a".repeat(129)] {
+            assert_eq!(link.proofs(bad, 41517), Err(LinkRefusal::Invalid), "{bad}");
+        }
+    }
+
+    #[test]
+    fn a_command_needs_a_paired_extension_a_known_action_and_small_object_args() {
+        let mut link = Link::default();
+        let now = Instant::now();
+        let ttl = Duration::from_secs(10);
+        assert_eq!(link.queue_command("list_browser_tabs", json!({}), ttl, now).err().as_deref(), Some("not-paired"));
+        paired(&mut link, now);
+        assert!(link.queue_command("list_browser_tabs", Value::Null, ttl, now).is_ok());
+        // The relay's delivery and the commands Hubble never sends are not commands.
+        for action in ["deliver_to_desktop", "close_tabs", "pin_tab", "exec", ""] {
+            assert_eq!(link.queue_command(action, json!({}), ttl, now).err().as_deref(), Some("unknown-action"), "{action}");
+        }
+        assert_eq!(link.queue_command("get_history", json!([1, 2]), ttl, now).err().as_deref(), Some("invalid"));
+        assert_eq!(link.queue_command("open_tabs", json!({ "urls": ["x".repeat(MAX_COMMAND_ARGS_BYTES)] }), ttl, now).err().as_deref(), Some("invalid"));
+        for _ in 1..MAX_WAITING_COMMANDS {
+            link.queue_command("list_browser_windows", json!({}), ttl, now).unwrap();
+        }
+        assert_eq!(link.queue_command("list_browser_windows", json!({}), ttl, now).err().as_deref(), Some("busy"));
+    }
+
+    #[test]
+    fn a_command_travels_to_the_extension_once_and_its_answer_back_to_the_app() {
+        let mut link = Link::default();
+        let now = Instant::now();
+        let (_, link_id) = paired(&mut link, now);
+        assert!(!link.extension_awake(now));
+        let (id, receiver) = link.queue_command("get_history", json!({ "startTime": 1 }), Duration::from_secs(10), now).unwrap();
+        assert!(!link.command_collected(&id));
+        let collected = link.collect_commands(&link_id, now);
+        assert_eq!(collected, vec![json!({ "id": id, "action": "get_history", "args": { "startTime": 1 } })]);
+        assert!(link.command_collected(&id));
+        assert!(link.extension_awake(now));
+        assert!(!link.extension_awake(now + AWAKE_WINDOW));
+        // Collected once.
+        assert!(link.collect_commands(&link_id, now).is_empty());
+        let answer = json!({ "id": id, "ok": true, "result": { "items": [] }, "extra": 1 }).to_string();
+        assert_eq!(link.finish_command(&link_id, answer.as_bytes()), Ok(id.clone()));
+        assert_eq!(receiver.recv().unwrap(), json!({ "ok": true, "result": { "items": [] } }));
+        // Answered once.
+        assert_eq!(link.finish_command(&link_id, answer.as_bytes()), Err(LinkRefusal::NotFound));
+    }
+
+    #[test]
+    fn only_the_link_that_collected_a_command_answers_it() {
+        let mut link = Link::default();
+        let now = Instant::now();
+        let (_, link_id) = paired(&mut link, now);
+        let (id, receiver) = link.queue_command("open_url", json!({ "url": "https://example.com" }), Duration::from_secs(10), now).unwrap();
+        let early = json!({ "id": id, "ok": true, "result": {} }).to_string();
+        // Not collected yet: nobody can answer it.
+        assert_eq!(link.finish_command(&link_id, early.as_bytes()), Err(LinkRefusal::NotFound));
+        link.collect_commands(&link_id, now);
+        assert_eq!(link.finish_command("another-link", early.as_bytes()), Err(LinkRefusal::NotFound));
+        for body in [json!({ "ok": true }), json!({ "id": id }), json!({ "id": "../x", "ok": true }), json!([id])] {
+            assert_eq!(link.finish_command(&link_id, body.to_string().as_bytes()), Err(LinkRefusal::Invalid), "{body}");
+        }
+        let failed = json!({ "id": id, "ok": false, "error": "e".repeat(500) }).to_string();
+        link.finish_command(&link_id, failed.as_bytes()).unwrap();
+        let answer = receiver.recv().unwrap();
+        assert_eq!(answer["ok"], false);
+        assert_eq!(answer["error"].as_str().unwrap().len(), 300);
+    }
+
+    #[test]
+    fn uncollected_commands_say_unreachable_unanswered_ones_time_out_and_disconnecting_drops_them() {
+        let mut link = Link::default();
+        let now = Instant::now();
+        let (token, link_id) = paired(&mut link, now);
+        let ttl = Duration::from_secs(5);
+        let (_, never_collected) = link.queue_command("list_browser_tabs", json!({}), ttl, now).unwrap();
+        link.sweep(now + ttl);
+        assert_eq!(never_collected.recv().unwrap(), json!({ "ok": false, "error": "extension-unreachable" }));
+
+        let (_, unanswered) = link.queue_command("list_browser_tabs", json!({}), ttl, now).unwrap();
+        link.collect_commands(&link_id, now);
+        link.sweep(now + ttl);
+        assert_eq!(unanswered.recv().unwrap(), json!({ "ok": false, "error": "timed-out" }));
+
+        // The TTL is capped.
+        let (id, _) = link.queue_command("get_history", json!({}), Duration::from_secs(3600), now).unwrap();
+        link.sweep(now + MAX_COMMAND_TTL);
+        assert!(!link.commands.contains_key(&id));
+
+        let (_, revoked) = link.queue_command("open_session", json!({}), ttl, now).unwrap();
+        link.collect_commands(&link_id, now);
+        link.revoke(&link_id);
+        assert_eq!(revoked.recv().unwrap(), json!({ "ok": false, "error": "not-paired" }));
+        assert!(link.authenticate(Some(&token), Some(EXT)).is_err());
+        assert_eq!(link.queue_command("open_session", json!({}), ttl, now).err().as_deref(), Some("not-paired"));
     }
 }

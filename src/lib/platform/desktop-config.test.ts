@@ -217,7 +217,7 @@ describe("the Rust shell", () => {
     });
   });
 
-  it("exposes exactly twenty commands to the frontend", () => {
+  it("exposes exactly twenty-one commands to the frontend", () => {
     const handler = libRs.match(/generate_handler!\[([\s\S]*?)\]/);
     expect(handler).not.toBeNull();
     const names = handler![1]
@@ -236,11 +236,6 @@ describe("the Rust shell", () => {
       "commands::app_info",
       "import_bridge::desktop_import_take",
       "import_bridge::desktop_import_finish",
-      // Asking Chrome through the browser ("The relay" in import_bridge.rs):
-      // open the approval page for one known question, take the answer, give up.
-      "import_bridge::desktop_relay_begin",
-      "import_bridge::desktop_relay_take",
-      "import_bridge::desktop_relay_cancel",
       // Pairing with Hubble for Chrome (extension_link.rs): the person's answer to a
       // pairing request, Settings' list and Disconnect, and the paired requests the
       // webview answers. Each takes ids and answers only; no token reaches the webview.
@@ -250,6 +245,11 @@ describe("the Rust shell", () => {
       "import_bridge::desktop_link_revoke",
       "import_bridge::desktop_link_take",
       "import_bridge::desktop_link_answer",
+      // Asking the paired Hubble for Chrome (extension_link.rs, "Commands from
+      // Hubble"): whether one is paired, and one allowlisted browser command.
+      // This replaced the website relay page, so the app no longer needs the website to reach Chrome.
+      "import_bridge::desktop_link_paired",
+      "import_bridge::desktop_link_command",
       // Hubble account: status, sign in through the browser (or a pasted
       // code), sign out, and account API calls with the token attached in
       // Rust. None returns the token.
@@ -258,6 +258,10 @@ describe("the Rust shell", () => {
       "account::account_sign_in_complete",
       "account::account_sign_out",
       "account::account_request",
+      // localStorage's durable copy (durable_store.rs): read it at start-up, write
+      // changes. Keys and values only, into one folder of the app's data — never a path.
+      "durable_store::durable_store_read",
+      "durable_store::durable_store_write",
     ]);
   });
 

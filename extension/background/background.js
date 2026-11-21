@@ -37,7 +37,7 @@ import {
   MSG_DESKTOP_UNPAIR,
   DESKTOP_WATCH_ALARM,
 } from "../src/config.js";
-import { LINK_KEY, PAIR_STATE_KEY, createDesktopLink } from "../src/desktop-link.js";
+import { DESKTOP_COMMAND_ACTIONS, LINK_KEY, PAIR_STATE_KEY, createDesktopLink, isDesktopWakeUrl } from "../src/desktop-link.js";
 import { createCaptureQueue, publicJob } from "../src/capture-queue.js";
 import { PROJECT_EVENTS, applyProjectsReport, readProjectsReport, readProjectsSnapshot } from "../src/projects-sync.js";
 import { aiProviderOf, checkPageRead, conversationIdentityOf, insertIntoComposer, readConversationFromPage } from "../src/ai-pages.js";
@@ -49,7 +49,7 @@ import { buildSessionCapture } from "../src/sessions.js";
 import { CONTEXT_ACTIONS, validateBrowserCommand } from "../src/browser-commands.js";
 import { createActivityCollector, isPaused, readContextSettings } from "../src/context-activity.js";
 import { activityKeyOf, isDetectable } from "../src/context-sites.js";
-import { createIdentityVerifier } from "../src/context-identity.js";
+import { createIdentityVerifier, ownerForDesktopAccount } from "../src/context-identity.js";
 import { BROWSER_ACTION_HANDLERS } from "../src/browser-actions.js";
 import {
   readStoredTarget,
@@ -719,7 +719,10 @@ async function markDesktopSeen() {
 /** A quiet look for Hubble Desktop when Chrome starts, so its menu items appear without opening the popup first. */
 async function noticeDesktop() {
   try {
-    if (await findDesktop()) await markDesktopSeen();
+    if (await findDesktop()) {
+      await markDesktopSeen();
+      serveDesktopCommands("startup", { forMs: 5000 });
+    }
   } catch {
     // Not open; nothing to show.
   }
@@ -1142,7 +1145,11 @@ const captureQueueCore = createCaptureQueue({
   storage: captureStorage,
   deliver: async (job, { openIfMissing }) => {
     // A context save is delivered only while the browser is still signed in as the account that asked for it.
-    if (job.owner && (await contextIdentity.currentOwner()) !== job.owner) return { ok: false, error: "identity-changed" };
+    // (Asked by Hubble Desktop: while this extension is still paired with it — the link is what identified the account.)
+    if (job.owner) {
+      const current = job.owner.startsWith("desktop:") ? ((await desktopLink.stored()) ? job.owner : "not-paired") : await contextIdentity.currentOwner();
+      if (current !== job.owner) return { ok: false, error: "identity-changed" };
+    }
     return askHubblePage("capture", { workspaceId: job.workspaceId, captureId: job.id, capture: job.capture }, { openIfMissing });
   },
   schedule: scheduleCaptureRetry,
@@ -1191,6 +1198,7 @@ async function watchForDesktop() {
     waiting = [];
   }
   const pending = waiting.filter((job) => job.status === "queued" || job.status === "saving");
+  if (await desktopLink.stored()) serveDesktopCommands("alarm", { forMs: 5000 });
   if (pending.length === 0) {
     globalThis.chrome?.alarms?.clear?.(DESKTOP_WATCH_ALARM)?.catch?.(() => {});
     return;
@@ -1220,6 +1228,78 @@ const desktopLink = createDesktopLink({
   launch: launchDesktop,
   log,
 });
+
+// ---- Commands from Hubble Desktop (src/desktop-link.js) ---------------------
+//
+// Hubble Desktop asks Chrome things (the tabs open now, a history range,
+// opening a saved session, context detection) by queueing a command on the
+// paired link; this worker collects and answers. It collects while it has
+// reason to expect one — Hubble opened its wake address, Hubble was nudged
+// about context activity, the worker just started, the once-a-minute watch —
+// and for a short while after the last command, since the person tends to ask
+// again. Each command goes through the same allowlist and validator as a
+// page's (browser-commands.js); context commands belong to the account Hubble
+// Desktop is signed in as, which the link — held only by that app — vouches for.
+
+/** Keep collecting this long after the last command. */
+const DESKTOP_SERVE_IDLE_MS = 30000;
+const DESKTOP_SERVE_POLL_MS = 700;
+let desktopServing = false;
+let desktopServeUntil = 0;
+
+function serveDesktopCommands(reason, { forMs = DESKTOP_SERVE_IDLE_MS } = {}) {
+  desktopServeUntil = Math.max(desktopServeUntil, Date.now() + forMs);
+  if (desktopServing) return;
+  desktopServing = true;
+  void (async () => {
+    let port;
+    let served = 0;
+    try {
+      while (Date.now() < desktopServeUntil) {
+        // Each round reads the link from chrome.storage, which also keeps this worker awake while it waits.
+        const collected = await desktopLink.collectCommands({ port });
+        if (!collected.ok) {
+          log("desktop-commands-stopped", { reason, error: collected.error });
+          break;
+        }
+        port = collected.port;
+        if (collected.commands.length === 0) {
+          await sleep(DESKTOP_SERVE_POLL_MS);
+          continue;
+        }
+        desktopServeUntil = Math.max(desktopServeUntil, Date.now() + DESKTOP_SERVE_IDLE_MS);
+        await Promise.all(
+          collected.commands.map(async (command) => {
+            const response = await handleDesktopCommand(command);
+            served += 1;
+            await desktopLink.sendResult(port, response);
+          })
+        );
+      }
+    } catch (err) {
+      log("desktop-commands-failed", { reason, detail: errorMessage(err) });
+    } finally {
+      desktopServing = false;
+      if (served > 0) log("desktop-commands-served", { reason, served });
+    }
+  })();
+}
+
+/** Runs one command Hubble Desktop sent. Resolves `{ id, ok, result | error }`; never throws. */
+async function handleDesktopCommand({ id, action, args }) {
+  if (!DESKTOP_COMMAND_ACTIONS.includes(action)) return { id, ok: false, error: "Hubble Desktop doesn't ask Chrome that." };
+  const validated = validateBrowserCommand(action, args);
+  if (!validated.ok) return { id, ok: false, error: validated.error };
+  const handler = CONTEXT_HANDLERS[action] ?? BROWSER_ACTION_HANDLERS[action];
+  if (!handler) return { id, ok: false, error: `No handler registered for "${action}".` };
+  try {
+    const commandArgs = CONTEXT_ACTIONS.includes(action) ? { ...validated.args, owner: await ownerForDesktopAccount(validated.args.account) } : validated.args;
+    const result = await handler(commandArgs, {});
+    return { id, ok: true, result };
+  } catch (err) {
+    return { id, ok: false, error: err instanceof Error ? err.message : "Browser command failed." };
+  }
+}
 
 let pairing = false;
 
@@ -1592,6 +1672,8 @@ function nudgeHubblePages() {
     for (const tab of tabs) {
       if (Number.isInteger(tab.id) && !tab.discarded) chrome.tabs.sendMessage(tab.id, { type: "HUBBLE_CONTEXT_CHANGED" }).catch(() => {});
     }
+    // Hubble Desktop hears it over the paired link, then asks (get_context_activity): stay to answer.
+    if ((await desktopLink.stored()) && (await desktopLink.nudge())) serveDesktopCommands("nudge", { forMs: 10000 });
   }, 3000);
 }
 
@@ -1643,6 +1725,15 @@ function scheduleContextRead(tab) {
 
 // Registered at module scope, as MV3 requires for events that wake a stopped worker.
 chrome.tabs.onUpdated?.addListener((tabId, changeInfo, tab) => {
+  // Hubble Desktop opened its wake address because it is waiting on this extension: close it and collect.
+  const wakeUrl = changeInfo?.url ?? tab?.url;
+  if (isDesktopWakeUrl(wakeUrl)) {
+    chrome.tabs.remove(tabId).catch(() => {});
+    // Not a page the person visited: kept out of Chrome's history (and so out of History Dump).
+    chrome.history?.deleteUrl?.({ url: wakeUrl })?.catch?.(() => {});
+    serveDesktopCommands("wake");
+    return;
+  }
   if (tab?.incognito || changeInfo?.discarded) return;
   if (changeInfo?.status === "complete") {
     // A page that loads in the tab in front is where the person is now (they followed a link or typed an address).

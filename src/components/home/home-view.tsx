@@ -1,7 +1,7 @@
 "use client"
 
 import { useMemo, useState } from "react"
-import { AlertCircle, ArrowRight, ArrowUpRight, Group, MessageSquareShare, Orbit, PanelLeftOpen, Play, Plus, Search } from "lucide-react"
+import { AlertCircle, ArrowRight, ArrowUpRight, Group, MessageSquareShare, Orbit, PanelLeftOpen, Play, Plug, Plus, Search } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { IconButton } from "@/components/ui/icon-button"
 import { KindGlyph, KIND_BG_CLASS } from "@/components/ui/kind-glyph"
@@ -73,6 +73,7 @@ export function HomeView({
   onUseInAi,
   onShowInGraph,
   context,
+  onConnectChrome,
 }: {
   /** The person's projects (workspaces), excluding an untouched default. */
   subjects: readonly Workspace[]
@@ -92,8 +93,10 @@ export function HomeView({
   onUseInAi?: (workspaceId: string) => void
   /** Opens the Graph focused on a node. */
   onShowInGraph?: (nodeId: string) => void
-  /** Context intelligence: suggestions, Smart Resume and the first-run choice. Absent in Hubble Desktop. */
+  /** Context intelligence: suggestions, Smart Resume and the first-run choice. */
   context?: HomeContextProps
+  /** Settings → Chrome extension: offered on the welcome while no Hubble for Chrome is connected, since that is how conversations come in. */
+  onConnectChrome?: () => void
 }) {
   const isDesktop = useIsDesktop()
   const { sessions: allSessions } = useTabSessions()
@@ -146,9 +149,19 @@ export function HomeView({
               <h1 className="text-display text-foreground">{firstRun ? "Welcome to Hubble" : "No projects yet"}</h1>
               <p className="mt-3 max-w-md text-body text-muted-foreground">Keep AI conversations, pages and notes in projects, then reuse them in any AI chat.</p>
             </div>
-            <Button type="button" size="lg" onClick={onNewSubject}>
-              <Plus /> New project
-            </Button>
+            <div className="flex flex-wrap items-center gap-2">
+              <Button type="button" size="lg" onClick={onNewSubject}>
+                <Plus /> New project
+              </Button>
+              {onConnectChrome && context?.connected === false && (
+                <Button type="button" size="lg" variant="outline" onClick={onConnectChrome}>
+                  <Plug /> Connect Chrome
+                </Button>
+              )}
+            </div>
+            {onConnectChrome && context?.connected === false && (
+              <p className="max-w-md text-body-sm text-muted-foreground">Conversations come in from Chrome: install Hubble for Chrome, then connect it to this app.</p>
+            )}
             <p className="text-meta text-tertiary">No sign-in needed. Everything stays {isDesktop ? "on this computer" : "in this browser"}.</p>
           </section>
         </main>
