@@ -1,7 +1,7 @@
 "use client"
 
 import type { CSSProperties, ReactNode } from "react"
-import { Globe, Layers, Monitor, ShieldCheck } from "lucide-react"
+import { Globe, Layers, Monitor } from "lucide-react"
 import { BrandMark } from "@/components/brand-mark"
 import { ProviderMark } from "@/components/memory/provider-mark"
 import { AI_PROVIDER_IDS, AI_PROVIDERS, type AiProvider } from "@/lib/providers/registry"
@@ -9,7 +9,7 @@ import { cn } from "@/lib/utils"
 
 /*
  * The page's quieter sections: the row of apps Hubble works with, the loop
- * band, and the three places Hubble runs. Claims come from the provider
+ * band, and the cards for the app and its Chrome companion. Claims come from the provider
  * registry (lib/providers/registry.ts) — the only place Hubble records what
  * it can do with each AI app — so this page cannot say more than the product
  * does.
@@ -24,8 +24,8 @@ export function capabilityLine(provider: AiProvider): string {
 export function WorksWith() {
   const tiles: { name: string; note: string; mark: ReactNode }[] = [
     ...AI_PROVIDER_IDS.map((id) => ({ name: AI_PROVIDERS[id].name, note: capabilityLine(AI_PROVIDERS[id]), mark: <ProviderMark provider={id} size={22} /> })),
-    { name: "Chrome", note: "Hubble for Chrome", mark: <Globe aria-hidden className="size-[22px] text-foreground" strokeWidth={1.5} /> },
-    { name: "Desktop", note: "Hubble Desktop", mark: <Monitor aria-hidden className="size-[22px] text-foreground" strokeWidth={1.5} /> },
+    { name: "Desktop", note: "The Hubble app", mark: <Monitor aria-hidden className="size-[22px] text-foreground" strokeWidth={1.5} /> },
+    { name: "Chrome", note: "Companion extension", mark: <Globe aria-hidden className="size-[22px] text-foreground" strokeWidth={1.5} /> },
   ]
   return (
     <ul className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
@@ -85,9 +85,9 @@ export function SurfaceCard({ title, body, link, children }: { title: string; bo
   return (
     <article className="m-tile flex flex-col p-[18px]">
       <h3 className="m-body text-foreground">{title}</h3>
-      <p className="m-body text-muted-foreground">{body}</p>
+      <p className="m-body text-muted-foreground md:min-h-[2lh]">{body}</p>
       {link && <div className="mt-3">{link}</div>}
-      <div className="m-stage mt-5 flex aspect-[4/3] items-center justify-center p-5 sm:p-6">{children}</div>
+      <div className="m-stage mt-5 flex h-[260px] items-center justify-center p-5 sm:h-[300px] sm:p-6">{children}</div>
     </article>
   )
 }
@@ -140,26 +140,6 @@ export function DesktopVisual() {
           ))}
         </div>
       </div>
-    </div>
-  )
-}
-
-/** AI connectors: the apps that can reach your synced projects, each on its own permission. */
-export function ConnectorsVisual() {
-  const connected = AI_PROVIDER_IDS.filter((id) => AI_PROVIDERS[id].capabilities.connector.supported)
-  return (
-    <div aria-hidden className="m-app m-window w-full max-w-[280px] p-3">
-      <p className="text-[12px] text-foreground">AI connectors</p>
-      <ul className="mt-2 flex flex-col gap-1.5">
-        {connected.map((id, index) => (
-          <li key={id} className="flex h-8 items-center gap-2 rounded-[5px] border border-subtle bg-[var(--m-ground-2)] px-2 text-[11px] text-foreground">
-            <ProviderMark provider={id} size={13} /> {AI_PROVIDERS[id].name}
-            <span className="ml-auto flex items-center gap-1 text-[10px] text-tertiary">
-              <ShieldCheck className="size-3" /> {index === connected.length - 1 ? "Read only" : "Read and save"}
-            </span>
-          </li>
-        ))}
-      </ul>
     </div>
   )
 }

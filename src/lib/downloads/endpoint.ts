@@ -1,25 +1,29 @@
+import { DESKTOP_BUILDS, parseDesktopOs, type DesktopBuild, type DesktopOs } from "@/lib/desktop/release";
 import {
-  DESKTOP_BUILDS,
-  downloadUrl,
-  isOfficialReleaseUrl,
-  parseDesktopOs,
-  type DesktopBuild,
-  type DesktopOs,
-} from "@/lib/desktop/release";
+  artifactUrl,
+  findArtifact,
+  isOfficialArtifactUrl,
+  parseArtifactArch,
+  parseArtifactFormat,
+  releaseFromBuilds,
+  type DesktopRelease,
+} from "@/lib/desktop/artifacts";
 import { utcDay, type DownloadCounter } from "./counter";
 
 /**
- * `GET /api/download?platform=<os>` — count one Hubble Desktop download,
- * then redirect to its GitHub Release asset.
+ * `GET /api/download?platform=<os>[&format=<format>&arch=<arch>]` — count
+ * one Hubble Desktop download, then redirect to its GitHub Release asset.
  *
  * ## Where the redirect goes
  *
- * Only to `downloadUrl(os)` from src/lib/desktop/release.ts: this
- * repository's GitHub Releases, for a build marked published there, at a URL
- * built from the version alone and re-checked by `isOfficialReleaseUrl`. The
- * request chooses a platform from a fixed list and nothing else. A request
- * with any other parameter is refused rather than ignored, so no future
- * change can quietly start honouring `?url=` or `?to=`.
+ * Only to an installer of the latest published release
+ * (src/lib/desktop/release-source.ts, read strictly by artifacts.ts): this
+ * repository's GitHub Releases, at a URL rebuilt from the version and an
+ * exact installer file name and re-checked by `isOfficialArtifactUrl`. The
+ * request chooses a platform — and optionally a format and architecture —
+ * from fixed lists and nothing else. A request with any other parameter is
+ * refused rather than ignored, so no future change can quietly start
+ * honouring `?url=` or `?to=`.
  *
  * ## What is counted
  *
@@ -52,7 +56,7 @@ export type DownloadRequestResult =
 export type DownloadRefusal = "unexpected-parameter" | "unknown-platform" | "not-available" | "method-not-allowed";
 
 const REFUSAL_MESSAGES: Record<DownloadRefusal, string> = {
-  "unexpected-parameter": "This download link takes one parameter: platform.",
+  "unexpected-parameter": "This download link takes a platform, and optionally a format and an architecture.",
   "unknown-platform": "Hubble Desktop has no build for that platform.",
   "not-available": "Hubble Desktop is not available to download for that platform yet.",
   "method-not-allowed": "Use GET to download Hubble Desktop.",
@@ -60,6 +64,9 @@ const REFUSAL_MESSAGES: Record<DownloadRefusal, string> = {
 
 export type DownloadEndpointDeps = {
   counter: () => Promise<DownloadCounter | undefined>;
+  /** The latest published release. Defaults to the reviewed table (`builds`). */
+  release?: () => Promise<DesktopRelease | null>;
+  /** The reviewed table, used when no `release` source is given. */
   builds?: Readonly<Record<DesktopOs, DesktopBuild>>;
   now?: () => number;
   /** Where a counting failure is reported. Defaults to console.error. */
@@ -87,25 +94,29 @@ export async function resolveDownloadRequest(
   request: Request,
   deps: DownloadEndpointDeps
 ): Promise<{ response: Response; result: DownloadRequestResult }> {
-  const builds = deps.builds ?? DESKTOP_BUILDS;
-
   if (request.method !== "GET" && request.method !== "HEAD") return refuse("method-not-allowed", 405);
 
   const params = new URL(request.url).searchParams;
+  const allowed = new Set(["platform", "format", "arch"]);
   const keys = [...params.keys()];
-  if (keys.length !== 1 || keys[0] !== "platform" || params.getAll("platform").length !== 1) {
+  if (!keys.includes("platform") || keys.some((key) => !allowed.has(key) || params.getAll(key).length !== 1)) {
     return refuse("unexpected-parameter", 400);
   }
   const platform = parseDesktopOs(params.get("platform"));
   if (!platform) return refuse("unknown-platform", 400);
+  const format = params.has("format") ? parseArtifactFormat(params.get("format")) : undefined;
+  const arch = params.has("arch") ? parseArtifactArch(params.get("arch")) : undefined;
+  if (format === null || arch === null) return refuse("unexpected-parameter", 400);
 
-  const build = builds[platform];
-  const destination = downloadUrl(platform, builds);
-  // downloadUrl already re-checks; asserted again here because this is the
+  const release = deps.release ? await deps.release() : releaseFromBuilds(deps.builds ?? DESKTOP_BUILDS);
+  const artifact = findArtifact(release, platform, format, arch);
+  const destination = release && artifact ? artifactUrl(release.version, artifact.name) : null;
+  // artifactUrl already re-checks; asserted again here because this is the
   // one line in the codebase that sends a visitor to another site.
-  if (!destination || build.status !== "published" || !isOfficialReleaseUrl(destination)) {
+  if (!release || !destination || !isOfficialArtifactUrl(destination)) {
     return refuse("not-available", 404);
   }
+  const build = { version: release.version };
 
   let counted = false;
   if (isCountableDownloadRequest(request)) {

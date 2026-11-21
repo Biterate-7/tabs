@@ -2,7 +2,7 @@ import Link from "next/link"
 import { ArrowLeft, Mail } from "lucide-react"
 import type { ReactNode } from "react"
 
-const CONTACT_EMAIL = "hubbleai.team@gmail.com"
+export const CONTACT_EMAIL = "hubbleai.team@gmail.com"
 
 const LEGAL_LINKS = [
   { href: "/privacy", label: "Privacy Policy" },

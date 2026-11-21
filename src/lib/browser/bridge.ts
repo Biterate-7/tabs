@@ -1,6 +1,7 @@
 "use client"
 
 import { createId } from "@/lib/id"
+import { desktopExtensionLink } from "@/lib/platform/desktop"
 import { isDesktop } from "@/lib/platform/detect"
 import {
   BROWSER_MESSAGE_SOURCE,
@@ -14,8 +15,18 @@ import {
 import type { BrowserActionName, BrowserCommandResult } from "./protocol"
 
 /**
- * The web app's half of the extension messaging bridge — mirrors
- * extension/content/content-script.js's relays exactly. This module never
+ * Hubble's half of the extension messaging bridge.
+ *
+ * Inside Hubble Desktop (the product) a command travels over the paired link:
+ * Rust queues it, the paired Hubble for Chrome collects it, validates it again
+ * (extension/src/browser-commands.js) and answers ("Commands from Hubble" in
+ * src-tauri/src/extension_link.rs). "Connected" there means "a Hubble for
+ * Chrome is paired". A command the person just asked for may wake Chrome; one
+ * Hubble sends by itself (`background`) never does.
+ *
+ * Outside it — the website's own pages that still talk to the extension
+ * (/desktop/connect), and jsdom tests — it is the page bridge, which
+ * mirrors extension/content/content-script.js's relays exactly. This module never
  * touches `chrome.*` (it can't; only the extension has that access) and
  * never imports anything from src/lib/actions — it is pure transport, kept
  * intentionally dumb so the *typed, validated* meaning of a command lives in
@@ -100,7 +111,7 @@ function postPing() {
  */
 let watchRefCount = 0
 export function startConnectionWatch(): () => void {
-  if (isDesktop()) return () => {}
+  if (isDesktop()) return startDesktopLinkWatch()
   ensureListening()
   watchRefCount += 1
 
@@ -124,6 +135,61 @@ export function startConnectionWatch(): () => void {
   }
 }
 
+/** How often Hubble Desktop re-reads whether an extension is paired (pairing and Disconnect happen in this window, or in Chrome). */
+const DESKTOP_LINK_POLL_MS = 5000
+let desktopWatchRefCount = 0
+let desktopWatchTimer: ReturnType<typeof setInterval> | null = null
+
+function checkDesktopLink() {
+  desktopExtensionLink
+    .paired()
+    .then((paired) => setConnected(paired))
+    .catch(() => setConnected(false))
+}
+
+function startDesktopLinkWatch(): () => void {
+  desktopWatchRefCount += 1
+  if (!desktopWatchTimer) {
+    checkDesktopLink()
+    desktopWatchTimer = setInterval(checkDesktopLink, DESKTOP_LINK_POLL_MS)
+  }
+  return () => {
+    desktopWatchRefCount -= 1
+    if (desktopWatchRefCount > 0) return
+    if (desktopWatchTimer) clearInterval(desktopWatchTimer)
+    desktopWatchTimer = null
+  }
+}
+
+/** The link's answers that mean "no Hubble for Chrome answered": callers fall back exactly as when the extension isn't there. */
+const DESKTOP_NO_EXTENSION = new Set(["not-paired", "extension-unreachable"])
+/** Waking Chrome may start the extension's worker first: a command the person asked for gets at least this long. */
+const DESKTOP_WAKE_MIN_TIMEOUT_MS = 12000
+/** A background command waits briefly by default: an awake extension collects at once, an asleep one is not woken. */
+const DESKTOP_BACKGROUND_TIMEOUT_MS = 3000
+
+async function sendDesktopCommand<Data>(id: string, action: BrowserActionName, args: unknown, opts?: BrowserCommandOptions): Promise<BrowserCommandResult<Data>> {
+  const background = opts?.background === true
+  const timeoutMs = background
+    ? (opts?.timeoutMs ?? DESKTOP_BACKGROUND_TIMEOUT_MS)
+    : Math.max(opts?.timeoutMs ?? DEFAULT_BROWSER_COMMAND_TIMEOUT_MS, DESKTOP_WAKE_MIN_TIMEOUT_MS)
+  const answer = await desktopExtensionLink.command(action, args ?? {}, { timeoutMs, wake: !background })
+  if (answer.ok) return { id, ok: true, result: answer.result as Data }
+  if (DESKTOP_NO_EXTENSION.has(answer.error)) return { id, ok: false, error: DESKTOP_UNREACHABLE }
+  if (answer.error === "timed-out") return { id, ok: false, error: "Timed out waiting for the browser extension to respond." }
+  return { id, ok: false, error: answer.error }
+}
+
+export type BrowserCommandOptions = {
+  timeoutMs?: number
+  /**
+   * Hubble is asking by itself (title lookup, context detection's pull), not
+   * because the person just did something. In Hubble Desktop such a command
+   * never wakes Chrome: it is answered only if the extension is awake.
+   */
+  background?: boolean
+}
+
 export function subscribeConnection(listener: (connected: boolean) => void): () => void {
   connectionListeners.add(listener)
   return () => connectionListeners.delete(listener)
@@ -144,11 +210,10 @@ export function isBrowserConnected(): boolean {
 export function sendBrowserCommand<Args, Data>(
   action: BrowserActionName,
   args: Args,
-  opts?: { timeoutMs?: number }
+  opts?: BrowserCommandOptions
 ): Promise<BrowserCommandResult<Data>> {
   const id = createId()
-  // Inside Hubble Desktop nothing would ever answer (see DESKTOP_UNREACHABLE), so say so now rather than after the timeout.
-  if (isDesktop()) return Promise.resolve({ id, ok: false, error: DESKTOP_UNREACHABLE })
+  if (isDesktop()) return sendDesktopCommand<Data>(id, action, args, opts)
   ensureListening()
   const timeoutMs = opts?.timeoutMs ?? DEFAULT_BROWSER_COMMAND_TIMEOUT_MS
 
@@ -179,6 +244,9 @@ export function __resetBrowserBridgeForTests(): void {
   pingTimer = null
   staleCheckTimer = null
   watchRefCount = 0
+  if (desktopWatchTimer) clearInterval(desktopWatchTimer)
+  desktopWatchTimer = null
+  desktopWatchRefCount = 0
   if (listenerAttached) {
     window.removeEventListener("message", handleWindowMessage)
     listenerAttached = false

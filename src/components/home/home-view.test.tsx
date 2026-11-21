@@ -64,6 +64,21 @@ describe("Home", () => {
     expect(screen.getByText(/No sign-in needed/)).toBeTruthy()
   })
 
+  it("on first launch, points to connecting Chrome until Hubble for Chrome is connected", async () => {
+    const user = userEvent.setup()
+    const context = { connected: false, onAccept: vi.fn(async () => true), onOpenSettings: vi.fn() }
+    const onConnectChrome = vi.fn()
+    renderHome({ firstRun: true, onConnectChrome, context })
+    expect(screen.getByText(/Conversations come in from Chrome/)).toBeTruthy()
+    await user.click(screen.getByRole("button", { name: /Connect Chrome/ }))
+    expect(onConnectChrome).toHaveBeenCalledTimes(1)
+  })
+
+  it("doesn't offer connecting Chrome once it is connected, or where the shell has no such step", () => {
+    renderHome({ firstRun: true, onConnectChrome: vi.fn(), context: { connected: true, onAccept: vi.fn(async () => true), onOpenSettings: vi.fn() } })
+    expect(screen.queryByRole("button", { name: /Connect Chrome/ })).toBeNull()
+  })
+
   it("leads with the projects and what each holds, and opens one", async () => {
     const user = userEvent.setup()
     const props = renderHome({

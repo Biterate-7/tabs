@@ -94,9 +94,9 @@ Rules:
 
 ## The website
 
-The public pages (`/welcome`, `/download`, the legal pages, and `/` for a
-first-time visitor) are **midnight black and monochrome**, whatever theme the
-visitor uses in the app. `.tabdump-marketing` in `src/app/marketing.css`
+The public pages (the launch page at `/`, `/download`, `/move` and the legal
+pages) are **midnight black and monochrome**, whatever theme the visitor uses
+in the app. `.tabdump-marketing` in `src/app/marketing.css`
 restates every semantic token in one palette — grounds `#08090b` › `#0d0e11` ›
 `#121419`, ink `#f5f5f5`, secondary `#92949b`, metadata `#7c8089` (the
 palette's `#666a73` walked up to clear AA; `#666a73` itself is for glyphs and
@@ -107,10 +107,14 @@ The only colour on these pages is the AI apps' own logos.
 `src/components/marketing/marketing-palette.test.ts` enforces this.
 
 The composition follows cursor.com: a 52px header, a short left-aligned hero
-over a large staged product window, a row of the apps Hubble works with,
-feature cards (words low in a 383px column, a window on a stage beside them),
-a centred statement, three surface cards, a changelog row, a 72–88px closing
-line and a footer on the card tone.
+(Download for the visitor's OS) over a large staged product window, a row of
+the apps Hubble works with, the app and its Chrome companion, feature cards
+(words low in a 383px column, a window on a stage beside them), a centred
+statement with the loop, a changelog row, a 72–88px closing line and a footer
+on the card tone. Hubble is a desktop app: no action on the site opens a web
+app, and anything that needs an account (AI connectors) says it arrives with
+sign-in (`CONNECTORS_AVAILABILITY` in `launch-page.tsx`) until accounts are
+switched on.
 
 Every window is drawn from a fixed sample project
 (`marketing/sample-knowledge.ts`) by the product's own code — search

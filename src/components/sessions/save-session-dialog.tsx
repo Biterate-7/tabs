@@ -36,8 +36,7 @@ function useChromeWindows(attempt: number): ReadState {
   const [state, setState] = useState<ReadState>({ kind: "loading" })
   useEffect(() => {
     let alive = true
-    // In Hubble Desktop this goes through the browser, where the person
-    // approves sending their open tabs (readChromeTabs).
+    // Hubble Desktop asks the paired Hubble for Chrome (readChromeTabs).
     void readChromeTabs().then((reading) => {
       if (!alive) return
       if (reading.ok && reading.windows) {
@@ -160,7 +159,7 @@ function SaveSessionBody({
         {read.kind === "loading" &&
           (desktop ? (
             <p role="status" className="text-body-sm text-muted-foreground">
-              Waiting for Chrome. A Hubble page opened in your browser: press Send there to share the tabs you have open.
+              Asking Chrome for your open tabs…
             </p>
           ) : (
             <p className="text-body-sm text-muted-foreground">Reading your Chrome tabs…</p>
@@ -168,7 +167,7 @@ function SaveSessionBody({
 
         {read.kind === "unavailable" &&
           (read.desktop ? (
-            <p className="text-body-sm text-muted-foreground">Sessions are saved from Chrome. Open Hubble in Chrome, or use Save session in Hubble for Chrome.</p>
+            <p className="text-body-sm text-muted-foreground">Sessions are saved from Chrome. Connect Hubble for Chrome in Settings → Chrome extension, or use Save session in its menu.</p>
           ) : (
             <p className="text-body-sm text-muted-foreground">
               This needs{" "}

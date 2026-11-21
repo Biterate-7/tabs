@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import { createMemoryDownloadCounter, type DownloadCounter } from "./counter";
 import { resolveDownloadRequest } from "./endpoint";
 import type { DesktopBuild, DesktopOs } from "@/lib/desktop/release";
+import { parseGithubRelease } from "@/lib/desktop/artifacts";
 
 const SHA = "c".repeat(64);
 const PUBLISHED: Record<DesktopOs, DesktopBuild> = {
@@ -181,5 +182,52 @@ describe("the shipped release state", () => {
     } else {
       expect(response.status).toBe(404);
     }
+  });
+});
+
+describe("downloads from the latest GitHub release", () => {
+  const release = parseGithubRelease({
+    tag_name: "desktop-v0.2.0",
+    draft: false,
+    prerelease: false,
+    body: "",
+    assets: ["Hubble_0.2.0_x64-setup.exe", "Hubble_0.2.0_x64_en-US.msi", "Hubble_0.2.0_universal.dmg", "Hubble_0.2.0_amd64.AppImage", "Hubble_0.2.0_amd64.deb"].map((name) => ({
+      name,
+      size: 1000,
+      state: "uploaded",
+      digest: `sha256:${SHA}`,
+    })),
+  });
+
+  async function live(query: string) {
+    const counter = createMemoryDownloadCounter();
+    const { response, result } = await resolveDownloadRequest(request(query), { counter: async () => counter, release: async () => release, now: () => NOON });
+    return { response, result, rows: await counter.rows() };
+  }
+
+  it("redirects each platform to its primary installer, and a format or architecture to that file", async () => {
+    const base = "https://github.com/Biterate-7/tabs/releases/download/desktop-v0.2.0/";
+    expect((await live("?platform=windows")).response.headers.get("location")).toBe(`${base}Hubble_0.2.0_x64-setup.exe`);
+    expect((await live("?platform=windows&format=msi&arch=x64")).response.headers.get("location")).toBe(`${base}Hubble_0.2.0_x64_en-US.msi`);
+    expect((await live("?platform=macos")).response.headers.get("location")).toBe(`${base}Hubble_0.2.0_universal.dmg`);
+    expect((await live("?platform=linux")).response.headers.get("location")).toBe(`${base}Hubble_0.2.0_amd64.AppImage`);
+    expect((await live("?platform=linux&format=deb")).response.headers.get("location")).toBe(`${base}Hubble_0.2.0_amd64.deb`);
+    const counted = await live("?platform=linux&format=deb");
+    expect(counted.rows).toEqual([{ day: "2026-10-01", platform: "linux", version: "0.2.0", downloads: 1 }]);
+  });
+
+  it("refuses a format the release doesn't have, an unknown one, and any other parameter", async () => {
+    expect((await live("?platform=linux&format=rpm")).response.status).toBe(404);
+    expect((await live("?platform=macos&format=exe")).response.status).toBe(400);
+    expect((await live("?platform=windows&url=https://evil.example")).response.status).toBe(400);
+    expect((await live("?platform=windows&format=msi&format=nsis")).response.status).toBe(400);
+    expect((await live("?format=msi")).response.status).toBe(400);
+  });
+
+  it("offers nothing when there is no release at all", async () => {
+    const counter = createMemoryDownloadCounter();
+    const { response } = await resolveDownloadRequest(request("?platform=windows"), { counter: async () => counter, release: async () => null, now: () => NOON });
+    expect(response.status).toBe(404);
+    expect(response.headers.get("location")).toBeNull();
   });
 });

@@ -16,11 +16,10 @@ afterEach(() => {
 })
 
 describe("Settings in Hubble Desktop", () => {
-  it("says how to send tabs here instead of a status that could only read Not connected", () => {
+  it("presents the extension as this app's companion instead of a status that could only read Not connected", () => {
     setDesktop(true)
     render(<ExtensionSection />)
-    expect(screen.getByText(/right-click a tab → Hubble → Add to Hubble Desktop/)).toBeTruthy()
-    expect(screen.getByText(/Save to Hubble on an AI chat saves here while this app is open/)).toBeTruthy()
+    expect(screen.getByText(/The companion extension: saves AI conversations and tabs from Chrome into your projects here/)).toBeTruthy()
     expect(screen.queryByText("Not connected")).toBeNull()
     expect(screen.getByRole("link", { name: /Download/ })).toBeTruthy()
   })

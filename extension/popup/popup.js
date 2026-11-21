@@ -15,6 +15,7 @@ import {
   DESKTOP_STATE_KEY,
   MSG_SAVE_SESSION,
   PROJECTS_SNAPSHOT_KEY,
+  MSG_DESKTOP_PAIR,
 } from "../src/config.js";
 import { buildImportPayload } from "../src/tabs.js";
 import { pageFingerprint } from "../src/tab-matching.js";
@@ -22,6 +23,7 @@ import { readStoredTarget } from "../src/quick-add.js";
 import { readProjectsSnapshot } from "../src/projects-sync.js";
 import { describeLeftOut, describeSaveFailure } from "../src/sessions.js";
 import { initAiPanel } from "./ai-panel.js";
+import { PAIR_STATE_KEY, describePairState } from "../src/desktop-link.js";
 
 const els = {
   loading: document.getElementById("state-loading"),
@@ -54,6 +56,9 @@ const els = {
   desktopCurrentButton: document.getElementById("desktop-current-button"),
   desktopSelectedButton: document.getElementById("desktop-selected-button"),
   desktopWindowButton: document.getElementById("desktop-window-button"),
+  desktopConnectRow: document.getElementById("desktop-connect-row"),
+  desktopConnectButton: document.getElementById("desktop-connect-button"),
+  desktopPairStatus: document.getElementById("desktop-pair-status"),
   webButton: document.getElementById("web-button"),
   sessionName: document.getElementById("session-name"),
   sessionProjectRow: document.getElementById("session-project-row"),
@@ -457,6 +462,14 @@ const DUMP_PHASE_LABEL = {
   [DUMP_PHASE.RETRYING_IN_NEW_TAB]: "The open Hubble tab didn't respond — retrying in a new one…",
 };
 
+/** Mirrors background.js's persisted phase into the progress state while a project add runs. Returns a detach function. */
+function watchDumpPhase() {
+  const detach = onDumpStateChange((state) => {
+    if (state.status === "running") showDumping(state.phase);
+  });
+  return detach ?? (() => {});
+}
+
 function showDumping(phase) {
   els.dumpingMessage.textContent = DUMP_PHASE_LABEL[phase] ?? "Saving tabs…";
   showState(els.dumping);
@@ -742,14 +755,63 @@ async function renderDesktop(readableCount) {
   } catch {
     status = undefined;
   }
-  if (els.ready.hidden || !(status?.available === true || status?.seen === true)) return;
-  els.desktopStatus.textContent = status.available ? "· open" : "· opens when you add";
+  // Hubble is a desktop app: its section is always here, saying whether it is running and connected.
+  if (els.ready.hidden) return;
+  els.desktopStatus.textContent = desktopStatusWords(status);
+  if (els.desktopConnectRow) els.desktopConnectRow.hidden = !(status?.available === true && status?.paired !== true && status?.pairable !== false);
+  renderPairState(status?.pairing);
   els.desktopCurrentButton.disabled = projectTabs.current === 0;
   els.desktopSelectedButton.hidden = projectTabs.selected < 2;
   els.desktopSelectedButton.textContent = `Add ${projectTabs.selected} selected`;
   els.desktopWindowButton.disabled = readableCount === 0;
   els.desktopWindowButton.textContent = `Add all ${readableCount}`;
   els.desktopSection.hidden = false;
+}
+
+/** "· connected", "· not running", … — the few words after the Hubble Desktop heading. */
+export function desktopStatusWords(status) {
+  if (!status) return "· not responding";
+  if (status.paired && status.available) return "· connected";
+  if (status.paired) return "· not running — opens when you add";
+  if (status.available) return status.pairable === false ? "· open (update it to connect)" : "· open, not connected";
+  return "· not running";
+}
+
+/** The pairing in progress, as words under the heading (src/desktop-link.js describePairState). */
+function renderPairState(state) {
+  if (!els.desktopPairStatus) return;
+  const described = describePairState(state);
+  // A finished pairing stays on screen briefly; one from long ago doesn't.
+  const fresh = state && (state.status === "waiting" || state.status === "starting" || Date.now() - (state.updatedAt ?? 0) < 60000);
+  els.desktopPairStatus.hidden = !(described && fresh);
+  els.desktopPairStatus.textContent = described && fresh ? described.text : "";
+  if (els.desktopConnectButton) els.desktopConnectButton.disabled = state?.status === "waiting" || state?.status === "starting";
+  if (state?.status === "approved" && fresh) {
+    if (els.desktopConnectRow) els.desktopConnectRow.hidden = true;
+    els.desktopStatus.textContent = "· connected";
+  }
+}
+
+async function connectDesktop() {
+  if (els.desktopConnectButton) els.desktopConnectButton.disabled = true;
+  renderPairState({ status: "starting", updatedAt: Date.now() });
+  try {
+    await chrome.runtime.sendMessage({ type: MSG_DESKTOP_PAIR });
+  } catch {
+    renderPairState({ status: "failed", error: "desktop-not-responding", updatedAt: Date.now() });
+  }
+}
+
+// The pairing runs in the background worker; this popup follows it, and once connected shows the projects.
+try {
+  chrome.storage?.onChanged?.addListener((changes, areaName) => {
+    if (areaName !== "session" || !changes?.[PAIR_STATE_KEY]) return;
+    const state = changes[PAIR_STATE_KEY].newValue;
+    renderPairState(state);
+    if (state?.status === "approved") void detectTabs();
+  });
+} catch {
+  // No storage events: reopening the popup shows the outcome.
 }
 
 /** Mirrors background.js's live desktop record into the progress state. Returns a detach function. */
@@ -813,62 +875,9 @@ async function addToDesktop(scope) {
 // the real (first) dump is still proceeding fine in the background.
 let dumpInFlight = false;
 
-async function dumpTabs() {
-  if (dumpInFlight) return;
-  dumpInFlight = true;
-  showDumping(DUMP_PHASE.QUERYING_TABS);
-  // Phase updates for the dump this popup started arrive the same way they
-  // do for one it merely inherited: through the persisted record. Attaching
-  // here means the "Opening Hubble…" / "Handing your tabs over…" progress
-  // is visible in the common case too, not only after a popup reopen.
-  const detachPhaseWatch = watchDumpPhase();
-  try {
-    // Re-collects fresh tabs at click time (rather than reusing the popup's
-    // initial snapshot) in case anything changed while the popup was open.
-    // excludeUrls carries forward whatever "already imported" set detectTabs
-    // learned, so a dump never re-sends tabs already in the workspace.
-    const response = await chrome.runtime.sendMessage({
-      type: MSG_DUMP_TABS,
-      payload: {
-        windowId: currentWindowId,
-        excludeUrls: alreadyImportedUrls ? Array.from(alreadyImportedUrls) : undefined,
-      },
-    });
-    detachPhaseWatch();
-    if (response?.reason === "already-running") {
-      // A dump is genuinely already in flight — most likely a narrow race
-      // this popup can't otherwise prevent. Attach to its real outcome
-      // instead of dead-ending on an error the user has no useful action
-      // for; renderDumpOutcome() takes it from here once it resolves.
-      watchForDumpCompletion(Date.now());
-    } else {
-      renderDumpOutcome(response ?? {});
-    }
-  } catch (err) {
-    detachPhaseWatch();
-    // chrome.runtime.sendMessage itself rejected/threw — the background
-    // service worker never answered at all (distinct from it answering with
-    // an error result, handled above), e.g. right after an extension
-    // reload/update invalidates this popup's connection. The dump may still
-    // be running, so point at the recovery path rather than implying it died.
-    showError({
-      message: "Lost contact with the Hubble extension. Reopen this popup to see how the dump ended.",
-      detail: err instanceof Error ? err.message : String(err),
-    });
-  } finally {
-    dumpInFlight = false;
-  }
-}
-
 /** Mirrors background.js's persisted phase into the dumping state. Returns a detach function. */
-function watchDumpPhase() {
-  const detach = onDumpStateChange((state) => {
-    if (state.status === "running") showDumping(state.phase);
-  });
-  return detach ?? (() => {});
-}
-
-els.dumpButton.addEventListener("click", dumpTabs);
+// Hubble is a desktop app: "Save all tabs" sends this window to Hubble Desktop, which asks which project they go to.
+els.dumpButton.addEventListener("click", () => void addToDesktop("window"));
 els.saveSessionButton?.addEventListener("click", () => void saveSession());
 els.sessionAllWindows?.addEventListener("change", updateSessionButton);
 els.sessionName?.addEventListener("keydown", (event) => {
@@ -886,8 +895,9 @@ els.retryButton.addEventListener("click", () => retryAction());
 els.desktopCurrentButton?.addEventListener("click", () => addToDesktop("current"));
 els.desktopSelectedButton?.addEventListener("click", () => addToDesktop("selected"));
 els.desktopWindowButton?.addEventListener("click", () => addToDesktop("window"));
+els.desktopConnectButton?.addEventListener("click", () => void connectDesktop());
 els.webButton?.addEventListener("click", () => {
-  // The same tabs, to Hubble Web (background.js decides: the project last open there, or Hubble Web to choose one).
+  // The same tabs again, starting Hubble Desktop first (hubble://) when it isn't running.
   void chrome.runtime.sendMessage({ type: MSG_DESKTOP_ACTION, payload: { action: "web" } }).catch(() => {});
   window.close();
 });

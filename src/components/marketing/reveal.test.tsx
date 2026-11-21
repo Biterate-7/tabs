@@ -2,20 +2,20 @@ import { readFileSync } from "node:fs"
 import { join } from "node:path"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { act, render } from "@testing-library/react"
-import { MarketingPage } from "./marketing-page"
+import { LaunchPage } from "./launch-page"
 import { REVEAL_THRESHOLD } from "./reveal"
 
 /** Every section below the hero, by what it is about. */
 const SECTION_TEXT = [
   "Works with the AI apps you already use",
+  "The app is Hubble. Chrome is how your browser reaches it.",
   "Rebuild your context in one place.",
   "Find it, whichever AI said it.",
   "Hand off with the full picture.",
   "Agents act. You approve.",
-  "Your work stays on your device. Hubble runs the loop.",
-  "Everywhere you work",
+  "Your work stays on your computer. Hubble runs the loop.",
   "Changelog",
-  "Try Hubble now.",
+  "Get Hubble for your computer.",
 ]
 
 /** An IntersectionObserver the test drives by hand, as scrolling would. */
@@ -70,7 +70,7 @@ function sections() {
 }
 
 function renderPage() {
-  return render(<MarketingPage onInstallExtension={vi.fn()} onPasteTabs={vi.fn()} />)
+  return render(<LaunchPage release={null} />)
 }
 
 beforeEach(() => {
@@ -90,7 +90,7 @@ describe("scroll reveal", () => {
     for (const text of SECTION_TEXT) {
       expect(revealing.some((section) => section.textContent?.includes(text)), text).toBe(true)
     }
-    for (const id of ["how-it-works", "capture", "find", "reuse", "agents", "everywhere", "changelog"]) {
+    for (const id of ["desktop-and-chrome", "how-it-works", "capture", "find", "reuse", "agents", "changelog"]) {
       expect(document.getElementById(id)?.classList.contains("m-reveal"), id).toBe(true)
     }
     for (const section of revealing) {

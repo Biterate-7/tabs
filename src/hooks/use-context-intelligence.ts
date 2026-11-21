@@ -6,6 +6,7 @@ import { useBrowserConnected } from "@/hooks/use-tab-sessions"
 import { createId } from "@/lib/id"
 import { BROWSER_MESSAGE_SOURCE } from "@/lib/browser/protocol"
 import { pullActivity } from "@/lib/intelligence/bridge"
+import { desktopLink } from "@/lib/platform"
 import { runInference } from "@/lib/intelligence/engine"
 import { getContextSnapshot, getServerContextSnapshot, subscribeContext, writeContext } from "@/lib/intelligence/persistence"
 import { getSettingsView, refreshSettings, subscribeSettingsView } from "@/lib/intelligence/settings-store"
@@ -36,8 +37,8 @@ export function useContextSettingsView(): SettingsView {
 
 /**
  * Keeps Hubble in step with the extension and the suggestions with the work.
- * Mounted once, by the shell, on the web only (Hubble Desktop can't reach the
- * extension).
+ * Mounted once, by the shell. In Hubble Desktop the extension is reached over
+ * the paired link, and "something changed" arrives as the link's nudge event.
  *
  *   pull     when the extension connects, when it says something changed
  *            (a nudge carrying nothing), and when this tab comes back into
@@ -108,8 +109,21 @@ export function useContextSync({ workspaces, enabled }: { workspaces: readonly W
     window.addEventListener("message", onMessage)
     document.addEventListener("visibilitychange", onVisible)
     window.addEventListener("focus", onVisible)
+    // Hubble Desktop: the paired extension nudges over the link, then stays a moment to answer the pull.
+    let stopNudges: (() => void) | undefined
+    void desktopLink()
+      ?.onNudge(() => {
+        lastSettingsAt.current = 0
+        refresh()
+      })
+      .then((stop) => {
+        if (cancelled) stop()
+        else stopNudges = stop
+      })
+      .catch(() => {})
     return () => {
       cancelled = true
+      stopNudges?.()
       window.removeEventListener("message", onMessage)
       document.removeEventListener("visibilitychange", onVisible)
       window.removeEventListener("focus", onVisible)

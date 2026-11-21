@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { apiUrl, publicApiUrl, ServerUnavailableError } from "./api-base";
-import { sendBrowserCommand, startConnectionWatch, __resetBrowserBridgeForTests } from "@/lib/browser/bridge";
+import { sendBrowserCommand, startConnectionWatch, subscribeConnection, __resetBrowserBridgeForTests } from "@/lib/browser/bridge";
 import { DESKTOP_UNREACHABLE } from "@/lib/browser/protocol";
 import { fetchBrowserHistory } from "@/lib/browser/history";
 import { requestTitles } from "@/lib/titles/client/queue";
@@ -68,35 +68,61 @@ describe("Hubble's own API from desktop", () => {
   });
 });
 
-describe("the extension's page bridge on desktop", () => {
-  it("answers every command at once, without posting to a page nobody listens on", async () => {
-    setDesktop(true);
-    const post = vi.spyOn(window, "postMessage");
-    vi.useFakeTimers();
+describe("the extension's bridge on desktop", () => {
+  /** A Tauri runtime whose commands answer from `answers`; records every call. */
+  function tauriAnswering(answers: Record<string, unknown>) {
+    const invoke = vi.fn(async (command: string) => answers[command]);
+    (window as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = { invoke, transformCallback: () => 0 };
+    return invoke;
+  }
 
+  it("sends a command over the paired link, never to a page, and may wake Chrome for something the person asked", async () => {
+    const invoke = tauriAnswering({ desktop_link_command: { ok: true, result: { tabs: [] } } });
+    const post = vi.spyOn(window, "postMessage");
     const result = await sendBrowserCommand("list_browser_tabs", {}, { timeoutMs: 2500 });
+    expect(result).toMatchObject({ ok: true, result: { tabs: [] } });
+    expect(invoke).toHaveBeenCalledWith("desktop_link_command", { action: "list_browser_tabs", args: {}, timeoutMs: 12000, wake: true }, undefined);
+    expect(post).not.toHaveBeenCalled();
+    post.mockRestore();
+  });
 
+  it("never wakes Chrome for a read Hubble makes by itself", async () => {
+    const invoke = tauriAnswering({ desktop_link_command: { ok: false, error: "extension-unreachable" } });
+    const result = await sendBrowserCommand("get_context_activity", { account: null }, { background: true });
     expect(result).toMatchObject({ ok: false, error: DESKTOP_UNREACHABLE });
-    expect(post).not.toHaveBeenCalled();
-    post.mockRestore();
+    expect(invoke).toHaveBeenCalledWith("desktop_link_command", { action: "get_context_activity", args: { account: null }, timeoutMs: 3000, wake: false }, undefined);
   });
 
-  it("asks Chrome for history through the browser relay, never the page bridge, and says why it got nothing", async () => {
-    setDesktop(true);
-    const post = vi.spyOn(window, "postMessage");
-    // No Tauri runtime in jsdom: opening the relay page fails at once, and that failure is what is reported.
-    const result = await fetchBrowserHistory(0);
-    expect(result).toMatchObject({ ok: false, reason: "error" });
-    expect(post).not.toHaveBeenCalled();
-    post.mockRestore();
+  it("answers as unreachable when nothing is paired, so callers fall back", async () => {
+    tauriAnswering({ desktop_link_command: { ok: false, error: "not-paired" } });
+    await expect(sendBrowserCommand("open_session", { requestId: "r", tabs: [] })).resolves.toMatchObject({ ok: false, error: DESKTOP_UNREACHABLE });
   });
 
-  it("starts no ping loop on desktop", () => {
-    setDesktop(true);
+  it("says a collected command that never came back timed out, and passes the extension's own refusal on", async () => {
+    tauriAnswering({ desktop_link_command: { ok: false, error: "timed-out" } });
+    await expect(sendBrowserCommand("list_browser_tabs", {})).resolves.toMatchObject({ ok: false, error: expect.stringMatching(/timed out/i) });
+    tauriAnswering({ desktop_link_command: { ok: false, error: "Only Hubble can ask for this." } });
+    await expect(sendBrowserCommand("list_browser_tabs", {})).resolves.toMatchObject({ ok: false, error: "Only Hubble can ask for this." });
+  });
+
+  it("reads history over the link, and says not-connected when no extension answered", async () => {
+    tauriAnswering({ desktop_link_command: { ok: true, result: { items: [{ url: "https://example.com" }] } } });
+    await expect(fetchBrowserHistory(0)).resolves.toEqual({ ok: true, items: [{ url: "https://example.com" }] });
+    tauriAnswering({ desktop_link_command: { ok: false, error: "extension-unreachable" } });
+    await expect(fetchBrowserHistory(0)).resolves.toEqual({ ok: false, reason: "not-connected" });
+  });
+
+  it("starts no ping loop on desktop: connected means a Hubble for Chrome is paired", async () => {
+    const invoke = tauriAnswering({ desktop_link_paired: true });
     const post = vi.spyOn(window, "postMessage");
+    const changes: boolean[] = [];
+    const unsubscribe = subscribeConnection((connected) => changes.push(connected));
     const stop = startConnectionWatch();
+    await vi.waitFor(() => expect(changes).toEqual([true]));
+    expect(invoke).toHaveBeenCalledWith("desktop_link_paired", {}, undefined);
     expect(post).not.toHaveBeenCalled();
     stop();
+    unsubscribe();
     post.mockRestore();
   });
 

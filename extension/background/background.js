@@ -1,26 +1,19 @@
 import {
   TABDUMP_ORIGIN,
-  TABDUMP_APP_PATH,
   MSG_DUMP_TABS,
   MSG_ADD_TO_PROJECT,
-  MSG_TABDUMP_IMPORT,
   MSG_CHECK_IMPORTED,
   MSG_BROWSER_COMMAND,
   MSG_FOCUS_TABDUMP,
   DUMP_STATE_KEY,
   DUMP_PHASE,
   TAB_READY_TIMEOUT_MS,
-  SEND_RETRY_DELAYS_MS,
-  CONTENT_SCRIPT_FILE,
   TARGET_PROJECT_KEY,
   HUBBLE_FOCUS_KEY,
   MSG_PROJECT_FOCUS,
-  MSG_SOURCE_STATUS,
   QUICK_ADD_COMMAND,
   MENU_ADD_TAB,
   MENU_ADD_PAGE,
-  SOURCE_STATUS_POLL_MS,
-  SOURCE_STATUS_POLL_LIMIT_MS,
   MSG_ADD_TO_DESKTOP,
   MSG_DESKTOP_STATUS,
   MSG_DESKTOP_ACTION,
@@ -33,7 +26,6 @@ import {
   MSG_CAPTURE_CONVERSATION,
   MSG_MEMORY_REQUEST,
   MSG_INSERT_CONTEXT,
-  MSG_PAGE_REQUEST,
   PAGE_READY_WAIT_MS,
   MSG_SAVE_SESSION,
   CAPTURE_JOBS_KEY,
@@ -41,21 +33,23 @@ import {
   MSG_CAPTURE_STATUS,
   MSG_CAPTURE_RETRY,
   PROJECTS_SNAPSHOT_KEY,
+  MSG_DESKTOP_PAIR,
+  MSG_DESKTOP_UNPAIR,
+  DESKTOP_WATCH_ALARM,
 } from "../src/config.js";
+import { DESKTOP_COMMAND_ACTIONS, LINK_KEY, PAIR_STATE_KEY, createDesktopLink, isDesktopWakeUrl } from "../src/desktop-link.js";
 import { createCaptureQueue, publicJob } from "../src/capture-queue.js";
 import { PROJECT_EVENTS, applyProjectsReport, readProjectsReport, readProjectsSnapshot } from "../src/projects-sync.js";
-import { pageFingerprint } from "../src/tab-matching.js";
 import { aiProviderOf, checkPageRead, conversationIdentityOf, insertIntoComposer, readConversationFromPage } from "../src/ai-pages.js";
 import { createTransferRunner, readTransferRequest, MSG_AI_PERMISSION_ANSWER, MSG_AI_TRANSFER, MSG_AI_TRANSFER_PROGRESS, TRANSFER_PROVIDERS, TRANSFER_TIMING } from "../src/ai-transfer.js";
 import { hubbleTransferStep } from "../src/ai-transfer-page.js";
-import { DESKTOP_LAUNCH_URL, findDesktop } from "../src/desktop.js";
+import { DESKTOP_LAUNCH_URL, buildDesktopPayload, findDesktop } from "../src/desktop.js";
 import { createDesktopAdd, createDesktopSave } from "../src/desktop-add.js";
-import { buildImportPayload } from "../src/tabs.js";
 import { buildSessionCapture } from "../src/sessions.js";
 import { CONTEXT_ACTIONS, validateBrowserCommand } from "../src/browser-commands.js";
 import { createActivityCollector, isPaused, readContextSettings } from "../src/context-activity.js";
 import { activityKeyOf, isDetectable } from "../src/context-sites.js";
-import { createIdentityVerifier } from "../src/context-identity.js";
+import { createIdentityVerifier, ownerForDesktopAccount } from "../src/context-identity.js";
 import { BROWSER_ACTION_HANDLERS } from "../src/browser-actions.js";
 import {
   readStoredTarget,
@@ -65,8 +59,6 @@ import {
   describeAdding,
   isBlankTab,
   describeOutcome,
-  describeStatuses,
-  statusesSettled,
   showQuickAddToast,
 } from "../src/quick-add.js";
 
@@ -111,42 +103,6 @@ async function setDumpState(state) {
 // chrome.tabs calls with the first.
 let activeDump = null;
 
-/**
- * A "running" dump record found in storage at service-worker startup can
- * only be an orphan: this module's `activeDump` is null by definition on a
- * fresh worker, so whatever wrote that record belonged to a worker instance
- * that no longer exists (evicted mid-dump, crashed, or reloaded). Left
- * alone, it makes the next popup open sit on "Dumping tabs…" until its
- * staleness deadline expires — waiting on a result nothing will ever write.
- *
- * MV3 gives no event for "you were evicted", so this runs at module scope
- * rather than from onStartup/onInstalled, which cover only browser launch
- * and install/update respectively — neither fires for a plain eviction,
- * which is the common case.
- */
-async function reconcileOrphanedDump() {
-  const session = chrome.storage?.session;
-  if (!session) return;
-  try {
-    const data = await session.get(DUMP_STATE_KEY);
-    const state = data?.[DUMP_STATE_KEY];
-    if (state?.status !== "running") return;
-    log("orphaned-dump-reconciled", { phase: state.phase, startedAt: state.startedAt });
-    await session.set({
-      [DUMP_STATE_KEY]: {
-        ...state,
-        status: "error",
-        ok: false,
-        reason: "interrupted",
-        finishedAt: Date.now(),
-      },
-    });
-  } catch (err) {
-    log("orphaned-dump-reconcile-failed", errorMessage(err));
-  }
-}
-
-reconcileOrphanedDump();
 
 // Renders any caught value into a plain, safe-to-display string. Every
 // error surfaced this way originates locally (chrome.* API rejections, or
@@ -156,174 +112,6 @@ reconcileOrphanedDump();
 // reports "dumping tabs failed" with no other detail to go on.
 function errorMessage(err) {
   return err instanceof Error ? err.message : String(err);
-}
-
-function newImportId() {
-  return globalThis.crypto?.randomUUID?.() ?? `import-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-}
-
-/**
- * Whether this tab is on the route that actually mounts Hubble's app shell.
- * Same-origin routes that don't (the /privacy, /terms and /cookies legal
- * pages) match chrome.tabs.query's url filter identically but can never
- * ingest a dump — handing one the payload used to look exactly like success.
- */
-function isAppRouteUrl(url) {
-  try {
-    return new URL(url).pathname === TABDUMP_APP_PATH;
-  } catch {
-    return false;
-  }
-}
-
-/**
- * Whether a rejected chrome.tabs.sendMessage means there was no content
- * script listening in that tab at all.
- *
- * Chrome words this one specific condition as "Could not establish
- * connection. Receiving end does not exist." It is materially different from
- * every other delivery failure — the message never reached any receiver, so
- * nothing about the page, the app or the payload is implicated — and it is
- * the one failure this extension can actually repair, by injecting the
- * content script itself. "The message port closed before a response was
- * received" is deliberately NOT matched: there a receiver existed and then
- * went away, which injecting a second copy would not fix.
- */
-function isMissingReceiverError(err) {
-  const message = errorMessage(err);
-  return /Receiving end does not exist|Could not establish connection/i.test(message);
-}
-
-/**
- * Puts the content script into a tab that does not have one.
- *
- * This is the repair for the failure that made Hubble look broken on every
- * machine but the developer's. Chrome injects manifest-declared content
- * scripts only as a page loads, so a tab that was already open when the
- * extension was installed or reloaded never receives one — and onboarding's
- * own final step ("Return to Hubble and click the Hubble extension")
- * guarantees that the very first tab a new user dumps into is exactly such a
- * tab. Without this, that dump could only ever fail with Chrome's
- * "Receiving end does not exist", no matter how many times it was retried:
- * retrying a tab that will never be injected into is not a recovery, it is
- * the same failure spelled slower.
- *
- * Injecting the same file the manifest declares (CONTENT_SCRIPT_FILE) into
- * the same isolated world is idempotent by construction — content-script.js
- * refuses to register a second set of listeners (see `alreadyRegistered`
- * there) — so this is safe to call on a tab that turns out to have had one
- * after all, which a document_start injection racing this call can cause.
- */
-async function ensureContentScriptInjected(tabId) {
-  if (!chrome.scripting?.executeScript) {
-    // Older Chrome, or the "scripting" permission missing from a hand-edited
-    // manifest. Reported rather than thrown: the caller still has the
-    // fresh-tab fallback, and a silent no-op here would make the resulting
-    // failure unattributable.
-    log("content-script-injection-unavailable", { tabId });
-    return false;
-  }
-  try {
-    await chrome.scripting.executeScript({ target: { tabId }, files: [CONTENT_SCRIPT_FILE] });
-    log("content-script-injected", { tabId });
-    return true;
-  } catch (err) {
-    // Injection is refused for a tab the extension has no host access to
-    // (a chrome:// page, the Web Store, another origin) and for a tab that
-    // has since closed. Neither is recoverable here.
-    log("content-script-injection-failed", { tabId, detail: errorMessage(err) });
-    return false;
-  }
-}
-
-/**
- * Delivers `payload` to one specific tab and resolves to what actually
- * happened there.
- *
- * Three failure modes are kept apart, because they call for three different
- * responses — and because collapsing them is what made every cross-machine
- * report arrive as the same undiagnosable "Hubble didn't respond":
- *
- *  - sendMessage rejecting with "Receiving end does not exist" means no
- *    content script is attached to that tab. Transient during a page load, so
- *    it is worth a couple of short retries — but PERMANENT for a tab that was
- *    already open when the extension was installed, which no number of
- *    retries can fix. So once the retries are spent, the script is injected
- *    and delivery is attempted once more against a receiver now known to
- *    exist. Only if that also fails is this reported as content-script-missing.
- *  - sendMessage rejecting for any other reason is a genuine delivery failure
- *    against a receiver that did exist.
- *  - a content script that answers `{ ok: false }` has given a definitive
- *    answer — the page behind it never became able to ingest the batch.
- *    Retrying the same tab would just burn another full ack timeout, so this
- *    returns immediately and lets the caller try a different tab instead.
- */
-async function deliverImportToTab(tabId, importId, payload, context = {}) {
-  const { windowId, phase } = context;
-  let lastError;
-
-  // Reads the content script's answer, or records why there wasn't one.
-  // Returns a settled delivery result, or undefined to mean "try again".
-  async function attemptSend(attempt) {
-    // Deliberately origin-only, never the tab's actual url: enough to prove
-    // which origin was targeted (the whole failure class is "the message went
-    // somewhere the content script does not run") without logging a page the
-    // user is looking at.
-    log("send-message", { tabId, windowId, origin: TABDUMP_ORIGIN, phase, attempt });
-    try {
-      const response = await chrome.tabs.sendMessage(tabId, { type: MSG_TABDUMP_IMPORT, importId, payload });
-
-      // A content script from a build predating the ack handshake answers
-      // `undefined`. Treat that as unproven rather than as success — the
-      // whole point of the handshake is that "the message was accepted by
-      // *something*" is not evidence the app ingested it.
-      if (!response) return { delivered: false, reason: "no-ack", detail: "The Hubble page did not confirm the import." };
-      if (response.ok) {
-        const duplicates = Number(response.duplicates) || 0;
-        return {
-          delivered: true,
-          accepted: Number(response.accepted) || 0,
-          ...(duplicates > 0 ? { duplicates } : {}),
-          // The page took the batch but has no project with the target id (deleted since it was remembered).
-          ...(response.reason === "project-missing" ? { projectMissing: true } : {}),
-        };
-      }
-      return {
-        delivered: false,
-        reason: response.reason === "page-not-ready" ? "page-not-ready" : "no-ack",
-        detail: `Hubble page reported "${response.reason}".`,
-      };
-    } catch (err) {
-      lastError = err;
-      return undefined;
-    }
-  }
-
-  let attempt = 0;
-  for (const delay of [0, ...SEND_RETRY_DELAYS_MS]) {
-    if (delay) await sleep(delay);
-    const settled = await attemptSend(++attempt);
-    if (settled) return settled;
-  }
-
-  // Every attempt was rejected. If that is because nothing is listening in
-  // this tab, it is repairable exactly once, right here.
-  if (isMissingReceiverError(lastError)) {
-    log("content-script-missing", { tabId, windowId, origin: TABDUMP_ORIGIN, phase, attempts: attempt });
-    if (await ensureContentScriptInjected(tabId)) {
-      const settled = await attemptSend(++attempt);
-      if (settled) return settled;
-    }
-  }
-
-  // Reported as two distinct reasons so the popup can tell the user the one
-  // thing that actually helps: a missing receiver is fixed by reloading the
-  // page (or the extension), which is useless advice for anything else.
-  return {
-    delivered: false,
-    reason: isMissingReceiverError(lastError) ? "content-script-missing" : "delivery-failed",
-    detail: errorMessage(lastError),
-  };
 }
 
 // Newly-created tabs need their content script to have attached before a
@@ -403,45 +191,6 @@ function waitForTabComplete(tabId, timeoutMs = TAB_READY_TIMEOUT_MS) {
 }
 
 /**
- * Opens a brand-new Hubble tab and waits for it to finish loading.
- * Resolves to `{ tabId, windowId }`.
- *
- * Deliberately never activates the tab or focuses its window.
- * chrome.tabs.create()'s default `active: true` puts a brand-new tab in the
- * foreground *immediately*, and Chrome dismisses an open action-popup the
- * instant the foreground tab changes — which would kill the popup before
- * dumpTabs() has finished its remaining async work. Activation is the
- * popup's own call, once it has rendered a result (see MSG_FOCUS_TABDUMP).
- */
-async function openHubbleTab() {
-  const created = await chrome.tabs.create({ url: TABDUMP_ORIGIN, active: false });
-  const outcome = await waitForTabComplete(created.id);
-  if (outcome === "removed") throw new Error("The Hubble tab was closed before it finished loading.");
-  return { tabId: created.id, windowId: created.windowId, loadOutcome: outcome };
-}
-
-/**
- * Picks the already-open Hubble tab most likely to be able to ingest a
- * dump, or `undefined` when there isn't one.
- *
- * Ordering, most to least preferred:
- *   1. the app route, currently active — the tab the user is actually looking at
- *   2. the app route, in the background
- * A same-origin tab that isn't on the app route (a legal page) is never
- * chosen: it can't mount the app shell, so handing it the payload would
- * always end in a wasted ack timeout followed by the fresh-tab fallback.
- * Opening a usable tab straight away is both faster and less confusing.
- *
- * A tab Chrome has discarded (Memory Saver) comes last: it has no page and no
- * content script until it is reloaded, so asking it anything only ever fails.
- */
-function pickIngestibleTab(matches) {
-  const appRoute = matches.filter((tab) => typeof tab.url === "string" && isAppRouteUrl(tab.url));
-  const live = appRoute.filter((tab) => !tab.discarded);
-  return live.find((tab) => tab.active) ?? live[0] ?? appRoute[0];
-}
-
-/**
  * The tabs to dump. `windowId` comes from the popup, which knows exactly
  * which window it was opened over and has already shown the user a preview
  * of that window's tabs.
@@ -485,178 +234,6 @@ function readTarget(target) {
   return { workspaceId, name };
 }
 
-async function dumpTabs(excludeUrls, windowId, options = {}) {
-  const startedAt = Date.now();
-  const importId = newImportId();
-  const target = readTarget(options.target);
-  const tabIds = Array.isArray(options.tabIds) ? options.tabIds.filter(Number.isInteger).slice(0, 50) : undefined;
-  const scope = tabIds ? "tabs" : options.scope === "current" || options.scope === "selected" ? options.scope : "window";
-  log("dump-started", { excludeCount: excludeUrls?.length ?? 0, importId, scope, toProject: Boolean(target) });
-
-  // The tab the person was looking at when the run started (its id and a fingerprint of its address — never the
-  // address): a popup opened later replays this run's result only over that same page, never over another
-  // conversation the tab or window has moved to since.
-  let shownTab;
-  async function persist(patch) {
-    // `via` lets the popup tell a quick add (already reported by its own toast) from a run it should replay.
-    await setDumpState({ startedAt, importId, ...(target ? { target } : {}), ...(options.via ? { via: options.via } : {}), ...(shownTab ? { shownTab } : {}), ...patch });
-  }
-
-  await persist({ status: "running", phase: DUMP_PHASE.QUERYING_TABS });
-
-  let chromeTabs;
-  try {
-    chromeTabs = tabIds ? await getTabs(tabIds) : await chrome.tabs.query(scopeQuery(scope, windowId));
-    const active = Array.isArray(chromeTabs) ? chromeTabs.find((tab) => tab?.active && Number.isInteger(tab.id) && typeof tab.url === "string") : undefined;
-    if (active) shownTab = { id: active.id, page: pageFingerprint(active.url) };
-  } catch (err) {
-    const result = { ok: false, status: "error", reason: "tab-query-failed", count: 0, detail: errorMessage(err) };
-    log("tab-query-failed", result.detail);
-    await persist({ ...result, phase: DUMP_PHASE.FINISHED, finishedAt: Date.now() });
-    return { result };
-  }
-
-  const payload = buildImportPayload(chromeTabs, excludeUrls);
-  const counts = {
-    count: payload.tabs.length,
-    skippedRestricted: payload.skippedRestricted,
-    skippedAlreadyImported: payload.skippedAlreadyImported,
-  };
-  log("tabs-detected", { totalOpenTabs: chromeTabs.length, ...counts });
-
-  if (payload.tabs.length === 0) {
-    // Only blank tabs (a new tab, about:blank): nothing to add, which is not Chrome refusing anything.
-    const blankOnly = chromeTabs.length > 0 && chromeTabs.every(isBlankTab);
-    const result = { ok: false, status: "error", reason: "no-importable-tabs", ...counts, ...(blankOnly ? { blankOnly } : {}) };
-    await persist({ ...result, phase: DUMP_PHASE.FINISHED, finishedAt: Date.now() });
-    return { result };
-  }
-
-  // A project target travels with the batch; the page checks it names one of its own projects.
-  const wire = { tabs: payload.tabs, ...(target ? { target: { workspaceId: target.workspaceId, as: "sources" } } : {}) };
-
-  // Attempt 1: an already-open, app-route Hubble tab, when there is one.
-  await persist({ status: "running", phase: DUMP_PHASE.RESOLVING_TAB, ...counts });
-
-  let existing;
-  try {
-    existing = pickIngestibleTab(await chrome.tabs.query({ url: `${TABDUMP_ORIGIN}/*` }));
-  } catch (err) {
-    // Not fatal on its own: we can still open a fresh tab below. Recorded so
-    // a profile where the url-filtered query is unexpectedly failing is
-    // diagnosable rather than merely looking like "no Hubble tab open".
-    log("tabdump-tab-lookup-failed", errorMessage(err));
-  }
-
-  if (existing?.id !== undefined) {
-    log("tabdump-tab-reused", { tabId: existing.id, windowId: existing.windowId });
-    await persist({ status: "running", phase: DUMP_PHASE.DELIVERING, ...counts });
-
-    const attempt = await deliverImportToTab(existing.id, importId, wire, {
-      windowId: existing.windowId,
-      phase: DUMP_PHASE.DELIVERING,
-    });
-    log("delivery-attempted", { tabId: existing.id, ...attempt });
-    if (attempt.delivered) {
-      return finishDelivered(attempt, existing.id, existing.windowId);
-    }
-    log("reused-tab-unusable", { tabId: existing.id, reason: attempt.reason });
-  }
-
-  // Attempt 2: a fresh tab. Reached either because no usable Hubble tab was
-  // open, or because the one that was open turned out not to be able to
-  // ingest (stale service-worker-less page, a crashed renderer, a build
-  // mid-deploy). Retrying in a known-good tab is the difference between a
-  // recoverable hiccup and a dump that silently vanishes.
-  await persist({
-    status: "running",
-    phase: existing ? DUMP_PHASE.RETRYING_IN_NEW_TAB : DUMP_PHASE.RESOLVING_TAB,
-    ...counts,
-  });
-
-  let opened;
-  try {
-    opened = await openHubbleTab();
-    log("tabdump-tab-opened", { tabId: opened.tabId, windowId: opened.windowId, loadOutcome: opened.loadOutcome });
-  } catch (err) {
-    // chrome.tabs.create itself failed — distinct from a *found* tab simply
-    // not answering, so this never gets misreported as "Hubble didn't
-    // respond".
-    const result = {
-      ok: false,
-      status: "error",
-      reason: "tab-open-failed",
-      ...counts,
-      detail: errorMessage(err),
-    };
-    log("tabdump-tab-open-failed", result.detail);
-    await persist({ ...result, phase: DUMP_PHASE.FINISHED, finishedAt: Date.now() });
-    return { result };
-  }
-
-  await persist({ status: "running", phase: DUMP_PHASE.DELIVERING, ...counts });
-  const attempt = await deliverImportToTab(opened.tabId, importId, wire, {
-    windowId: opened.windowId,
-    phase: DUMP_PHASE.DELIVERING,
-  });
-  log("delivery-attempted", { tabId: opened.tabId, ...attempt });
-
-  if (attempt.delivered) {
-    return finishDelivered(attempt, opened.tabId, opened.windowId);
-  }
-
-  // A tab that never reached `status: "complete"` is a materially different
-  // diagnosis from one that loaded and then didn't answer: it means the
-  // Hubble origin itself couldn't be reached (offline, DNS, a captive
-  // portal, a deployment that's down), which no amount of retrying in-page
-  // will fix. Reporting the load timeout instead of the downstream "no
-  // content script answered" is the difference between an actionable error
-  // and a misleading one.
-  const timedOutLoading = opened.loadOutcome === "timeout";
-  const result = {
-    ok: false,
-    status: "error",
-    reason: timedOutLoading ? "tab-load-timeout" : attempt.reason,
-    ...counts,
-    detail: timedOutLoading
-      ? `${TABDUMP_ORIGIN} did not finish loading within ${TAB_READY_TIMEOUT_MS}ms.`
-      : attempt.detail,
-    focusTabId: opened.tabId,
-    focusWindowId: opened.windowId,
-  };
-  await persist({ ...result, phase: DUMP_PHASE.FINISHED, finishedAt: Date.now() });
-  log("dump-finished", result);
-  return { result };
-
-  async function finishDelivered(attempt, tabId, windowId) {
-    // Acked, but with nothing taken: the app received the batch and parsed
-    // zero usable tabs out of it. That is a failure, not a success with a
-    // zero — reporting it as "Dumped 0 tabs" is exactly the kind of
-    // false-positive this whole handshake exists to eliminate.
-    // Into a project, a tab that is already one of its sources is not a failure: it is already there.
-    const duplicates = target ? attempt.duplicates ?? 0 : 0;
-    const nothingImported = attempt.accepted === 0 && duplicates === 0;
-    const projectMissing = Boolean(target && attempt.projectMissing);
-    const partial = !nothingImported && attempt.accepted + duplicates < payload.tabs.length;
-
-    const result = {
-      ok: !nothingImported,
-      status: nothingImported ? "error" : partial ? "partial" : "done",
-      ...counts,
-      accepted: attempt.accepted,
-      ...(duplicates > 0 ? { alreadyInProject: duplicates } : {}),
-      ...(target ? { target } : {}),
-      ...(nothingImported ? { reason: projectMissing ? "project-missing" : "nothing-imported" } : {}),
-      focusTabId: tabId,
-      focusWindowId: windowId,
-    };
-    await persist({ ...result, phase: DUMP_PHASE.FINISHED, finishedAt: Date.now() });
-    log("dump-finished", result);
-    // The addresses and titles go back to quick add (to name the source and follow its reading) but never into the persisted record.
-    return { result, urls: payload.tabs.map((tab) => tab.url), titles: payload.tabs.map((tab) => tab.title ?? "") };
-  }
-}
-
 // Calling sendResponse on a message port whose other end (the popup) has
 // already closed throws in some Chrome versions — without this guard, that
 // throw would propagate out of the .then() below, land in the trailing
@@ -686,11 +263,14 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     safeSendResponse(sendResponse, { ok: false, status: "error", reason: "no-project", count: 0 });
     return true;
   }
+  // Hubble is a desktop app: both go to Hubble Desktop. A chosen project takes the tabs straight in (paired);
+  // "Save all tabs" asks there which project they go to.
   const run = (
     message.type === MSG_ADD_TO_PROJECT
-      ? dumpTabs(undefined, message.payload?.windowId, { scope: message.payload?.scope, tabIds: message.payload?.tabIds, target: message.payload?.target })
-      : dumpTabs(message.payload?.excludeUrls, message.payload?.windowId)
+      ? addToProjectOnDesktop({ scope: message.payload?.scope, tabIds: message.payload?.tabIds, windowId: message.payload?.windowId, target: readTarget(message.payload?.target) })
+      : runDesktopAdd({ scope: "window", windowId: Number.isInteger(message.payload?.windowId) ? message.payload.windowId : undefined })
   )
+    .then((result) => ({ result }))
     .then(({ result }) => {
       // Nothing else happens after this. Activating or focusing the Hubble
       // tab from here would close the popup the instant Chrome noticed the
@@ -747,46 +327,12 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   return true; // keep the message channel open for the async sendResponse
 });
 
-// Answers "which of these urls are already in the currently selected
-// workspace?" by relaying to an *already open* Hubble tab's content
-// script — deliberately never opens or focuses one just to check, since
-// that would be a surprising side effect of simply opening the popup.
-// Genuinely unknowable without an open tab (or if the page doesn't answer
-// in time), in which case the popup falls back to its plain wording.
-async function checkImported(urls) {
-  const existing = pickIngestibleTab(await chrome.tabs.query({ url: `${TABDUMP_ORIGIN}/*` }));
-  if (!existing) return { ok: false, reason: "no-tabdump-tab" };
-
-  function ask() {
-    return chrome.tabs.sendMessage(existing.id, { type: MSG_CHECK_IMPORTED, payload: { urls } });
-  }
-
-  try {
-    return (await ask()) ?? { ok: false, reason: "no-response" };
-  } catch (err) {
-    // Same pre-install tab, same repair as the dump path: without it the
-    // popup quietly loses its "31 new · 16 already imported" breakdown on
-    // exactly the tabs a new user has open, and falls back to plain counts
-    // for a reason nothing records.
-    if (!isMissingReceiverError(err) || !(await ensureContentScriptInjected(existing.id))) {
-      return { ok: false, reason: isMissingReceiverError(err) ? "content-script-missing" : "delivery-failed" };
-    }
-    try {
-      return (await ask()) ?? { ok: false, reason: "no-response" };
-    } catch {
-      return { ok: false, reason: "content-script-missing" };
-    }
-  }
-}
-
+// "Which of these tabs are already saved?" was answered by a Hubble tab in the browser. Hubble Desktop holds the
+// projects now and the popup no longer asks; an older popup is told it can't be known, which it already handles.
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message?.type !== MSG_CHECK_IMPORTED) return undefined;
-
-  checkImported(message.payload?.urls ?? [])
-    .then((response) => safeSendResponse(sendResponse, response))
-    .catch(() => safeSendResponse(sendResponse, { ok: false, reason: "unexpected-error" }));
-
-  return true; // keep the message channel open for the async sendResponse
+  safeSendResponse(sendResponse, { ok: false, reason: "no-tabdump-tab" });
+  return undefined;
 });
 
 /**
@@ -946,64 +492,7 @@ async function showToast(tabId, toast) {
 }
 
 /** Statuses as the page reported them, re-checked: a known status and an optional short reason each. */
-function readStatuses(raw) {
-  if (!Array.isArray(raw)) return undefined;
-  const known = new Set(["pending", "processing", "ready", "partial", "failed"]);
-  return raw
-    .filter((entry) => entry && known.has(entry.status))
-    .slice(0, 50)
-    .map((entry) => ({ status: entry.status, ...(typeof entry.detail === "string" && entry.detail ? { detail: entry.detail.slice(0, 160) } : {}) }));
-}
-
-async function askSourceStatus(hubbleTabId, workspaceId, urls) {
-  try {
-    const response = await chrome.tabs.sendMessage(hubbleTabId, { type: MSG_SOURCE_STATUS, payload: { workspaceId, urls } });
-    return response?.ok ? readStatuses(response.statuses) : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
 // Each quick add owns the toast until the next one starts; a stale follow-up stops writing.
-let quickAddGeneration = 0;
-
-/**
- * Keeps the toast saying how reading is going, in the project home's own
- * words, until every source has settled or the budget runs out (then Hubble
- * itself has the rest):
- *
- *   ◌ Adding to History IA…        →   ✓ Added to History IA
- *     Britannica — Cuban crisis           Britannica — Cuban crisis
- *     Reading source…                     Ready · 1,840 words
- */
-async function followReading({ generation, toastTabId, hubbleTabId, workspaceId, urls, reading, done }) {
-  const deadline = Date.now() + SOURCE_STATUS_POLL_LIMIT_MS;
-  let shown = reading.status;
-  while (generation === quickAddGeneration) {
-    const statuses = await askSourceStatus(hubbleTabId, workspaceId, urls);
-    if (generation !== quickAddGeneration) return;
-    const line = describeStatuses(statuses);
-    const settled = statusesSettled(statuses);
-    const timedOut = Date.now() >= deadline;
-    // No answer, or Hubble holds none of these addresses as sources: nothing more to follow from here.
-    if (!statuses || statuses.length === 0 || settled || timedOut) {
-      const status = settled
-        ? line
-        : !timedOut
-          ? "Hubble is reading it now."
-          : line && !line.startsWith("Reading")
-            ? `${line} · see the rest in Hubble`
-            : "Still reading. See its status in Hubble.";
-      await showToast(toastTabId, { ...done, status, dismissAfterMs: 6000 });
-      return;
-    }
-    if (line && line !== shown) {
-      shown = line;
-      await showToast(toastTabId, { ...reading, status: line });
-    }
-    await sleep(SOURCE_STATUS_POLL_MS);
-  }
-}
 
 /**
  * One quick add. `tabIds` names exact tabs; otherwise `scope: "selected"`
@@ -1011,7 +500,6 @@ async function followReading({ generation, toastTabId, hubbleTabId, workspaceId,
  * selected). `toastTabId` is the tab the person is looking at.
  */
 async function quickAdd({ scope, tabIds, windowId, toastTabId }) {
-  const generation = ++quickAddGeneration;
   const target = await storedTarget();
   if (!target) {
     await showToast(toastTabId, { ...describeOutcome({ ok: false, reason: "no-project" }), dismissAfterMs: 7000 });
@@ -1023,38 +511,49 @@ async function quickAdd({ scope, tabIds, windowId, toastTabId }) {
     return { ok: false, reason: "already-running" };
   }
 
+  // Not connected to Hubble Desktop: the tabs go there anyway, and the person picks the project in Hubble.
+  if (!(await desktopLink.stored())) return runDesktopAdd({ scope, ...(tabIds ? { tabIds } : {}), ...(windowId !== undefined ? { windowId } : {}), toastTabId });
+
   await showToast(toastTabId, describeAdding(named));
-  const run = dumpTabs(undefined, windowId, { scope, tabIds, target: named, via: "quick-add" });
+  const run = addToProjectOnDesktop({ scope, tabIds, windowId, target: named });
   activeDump = run;
-  let outcome;
+  let result;
   try {
-    outcome = await run;
+    result = await run;
   } catch (err) {
-    outcome = { result: { ok: false, status: "error", reason: "unexpected-error", detail: errorMessage(err) } };
+    result = { ok: false, status: "error", reason: "unexpected-error", detail: errorMessage(err) };
   } finally {
     activeDump = null;
   }
-
-  const { result, urls, titles } = outcome;
-  // One source: say which, by the title Chrome showed on its tab.
-  const source = urls?.length === 1 && titles?.[0] ? titles[0].slice(0, 160) : undefined;
-  const focus = Number.isInteger(result.focusTabId) ? { tabId: result.focusTabId, windowId: result.focusWindowId } : undefined;
-  // Every outcome names the project, including failures that happen before the run knows its target.
-  const done = { ...describeOutcome({ ...result, target: result.target ?? named }), ...(source ? { source } : {}), ...(focus ? { focus } : {}) };
-  // Only a new source has reading to follow; a duplicate was read when it first came in.
-  if (done.tone !== "done" || !focus || !urls?.length) {
-    await showToast(toastTabId, { ...done, dismissAfterMs: result.ok ? 6000 : 8000 });
-    return result;
-  }
-  const reading = { ...describeAdding(named), ...(source ? { source } : {}), ...(done.detail ? { detail: done.detail } : {}), status: "Reading source…", focus };
-  const visible = await showToast(toastTabId, reading);
-  // No toast to keep current (a Chrome page): the toolbar icon says it was added, and Hubble shows the reading.
-  if (!visible) {
-    await showToast(toastTabId, { ...done, dismissAfterMs: 6000 });
-    return result;
-  }
-  await followReading({ generation, toastTabId, hubbleTabId: focus.tabId, workspaceId: target.id, urls, reading, done });
+  // Hubble Desktop reads new sources itself and shows it there; the toast says what was added.
+  const done = describeOutcome({ ...result, target: result.target ?? named });
+  await showToast(toastTabId, { ...done, ...(result.source ? { source: result.source } : {}), dismissAfterMs: result.ok ? 6000 : 8000 });
   return result;
+}
+
+/**
+ * Tabs into a project the person chose in Chrome, on Hubble Desktop, through
+ * the paired link (kind "add-sources"). Starts Hubble when it isn't running.
+ * Resolves the shape describeOutcome words.
+ */
+async function addToProjectOnDesktop({ scope, tabIds, windowId, target }) {
+  if (!target) return { ok: false, status: "error", reason: "no-project" };
+  const chromeTabs = await collectTabs({ scope, tabIds, windowId });
+  const { payload, skippedRestricted } = buildDesktopPayload(chromeTabs);
+  if (payload.tabs.length === 0) {
+    return { ok: false, status: "error", reason: "no-importable-tabs", target, skippedRestricted, ...(chromeTabs.length > 0 && chromeTabs.every(isBlankTab) ? { blankOnly: true } : {}) };
+  }
+  const tabs = payload.tabs.map((tab) => ({ url: tab.url, ...(tab.title ? { title: tab.title } : {}), ...(tab.favicon && tab.favicon.length <= 9000 ? { favicon: tab.favicon } : {}) }));
+  const answer = await askHubblePage("add-sources", { workspaceId: target.workspaceId, tabs }, { openIfMissing: true });
+  const source = tabs.length === 1 && tabs[0].title ? tabs[0].title.slice(0, 160) : undefined;
+  if (!answer.ok) {
+    log("desktop-add-sources-failed", { error: answer.error });
+    return { ok: false, status: "error", reason: answer.error === "project-missing" ? "project-missing" : answer.error, target };
+  }
+  const added = Number(answer.result?.added) || 0;
+  const duplicates = Number(answer.result?.duplicates) || 0;
+  const name = typeof answer.result?.project === "string" && answer.result.project ? answer.result.project : target.name;
+  return { ok: true, status: "done", accepted: added, alreadyInProject: duplicates, skippedRestricted, target: { ...target, name }, ...(source ? { source } : {}) };
 }
 
 async function activeTabIn(windowId) {
@@ -1196,7 +695,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 // Web — never a silent nothing. Hubble Web (everything above) is unchanged.
 // ---------------------------------------------------------------------------
 
-const DESKTOP_ACTION_LABELS = { retry: "Try again", web: "Open Hubble Web" };
+const DESKTOP_ACTION_LABELS = { retry: "Try again", web: "Get Hubble Desktop" };
 
 async function desktopSeen() {
   try {
@@ -1220,7 +719,10 @@ async function markDesktopSeen() {
 /** A quiet look for Hubble Desktop when Chrome starts, so its menu items appear without opening the popup first. */
 async function noticeDesktop() {
   try {
-    if (await findDesktop()) await markDesktopSeen();
+    if (await findDesktop()) {
+      await markDesktopSeen();
+      serveDesktopCommands("startup", { forMs: 5000 });
+    }
   } catch {
     // Not open; nothing to show.
   }
@@ -1318,9 +820,10 @@ async function runDesktopAdd({ toastTabId, ...selection }) {
  * project to send to — Hubble Web itself, to choose one.
  */
 async function addWithHubbleWeb(last, toastTabId) {
-  if (await storedTarget()) return quickAdd({ ...last, toastTabId });
-  await chrome.tabs.create({ url: TABDUMP_ORIGIN, active: true });
-  return { ok: false, reason: "no-project" };
+  // Hubble is a desktop app: with it running, the same tabs go again; without it, its download page opens.
+  if (await findDesktop().catch(() => undefined)) return runDesktopAdd({ ...last, toastTabId });
+  await chrome.tabs.create({ url: `${TABDUMP_ORIGIN}/download`, active: true });
+  return { ok: false, reason: "desktop-not-installed" };
 }
 
 async function lastDesktopSelection() {
@@ -1335,10 +838,38 @@ async function lastDesktopSelection() {
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.type === MSG_DESKTOP_STATUS) {
     (async () => {
-      const found = await findDesktop().catch(() => undefined);
-      if (found) await markDesktopSeen();
-      return { ok: true, available: Boolean(found), conversations: Boolean(found?.conversations), seen: Boolean(found) || (await desktopSeen()) };
+      const link = await desktopLink.status();
+      if (link.running) await markDesktopSeen();
+      if (link.running && link.paired) void flushCaptures("desktop-ready");
+      const pairing = (await chrome.storage?.session?.get(PAIR_STATE_KEY).catch(() => undefined))?.[PAIR_STATE_KEY];
+      return {
+        ok: true,
+        available: link.running,
+        conversations: link.running,
+        paired: link.paired,
+        pairable: link.pairable !== false,
+        ...(link.revoked ? { revoked: true } : {}),
+        ...(pairing ? { pairing } : {}),
+        seen: link.running || link.paired || (await desktopSeen()),
+      };
     })().then((response) => safeSendResponse(sendResponse, response));
+    return true;
+  }
+
+  if (message?.type === MSG_DESKTOP_PAIR) {
+    if (sender?.id !== chrome.runtime.id || sender?.tab) return undefined;
+    void pairWithDesktop();
+    safeSendResponse(sendResponse, { ok: true });
+    return undefined;
+  }
+
+  if (message?.type === MSG_DESKTOP_UNPAIR) {
+    if (sender?.id !== chrome.runtime.id || sender?.tab) return undefined;
+    desktopLink
+      .forget()
+      .then(() => chrome.storage?.session?.remove(PAIR_STATE_KEY))
+      .then(() => safeSendResponse(sendResponse, { ok: true }))
+      .catch(() => safeSendResponse(sendResponse, { ok: false }));
     return true;
   }
 
@@ -1400,53 +931,40 @@ function newRequestId() {
  * again for a few seconds.
  */
 async function askHubblePage(kind, args, { openIfMissing = false } = {}) {
-  let tab;
-  try {
-    tab = pickIngestibleTab(await chrome.tabs.query({ url: `${TABDUMP_ORIGIN}/*` }));
-  } catch {
-    tab = undefined;
-  }
-  // Discarded by Chrome (Memory Saver): nothing is running there to answer. Reloaded only for something the person just asked for.
-  if (tab?.discarded) {
-    if (!openIfMissing) return { ok: false, error: "no-hubble-tab" };
-    try {
-      await chrome.tabs.reload(tab.id);
-      if ((await waitForTabComplete(tab.id)) === "removed") tab = undefined;
-    } catch {
-      tab = undefined;
-    }
-  }
-  if (!tab) {
-    if (!openIfMissing) return { ok: false, error: "no-hubble-tab" };
-    try {
-      const opened = await openHubbleTab();
-      tab = { id: opened.tabId, windowId: opened.windowId };
-    } catch {
-      return { ok: false, error: "hubble-unreachable" };
-    }
-  }
-
   const deadline = Date.now() + PAGE_READY_WAIT_MS;
-  let injected = false;
+  let mayLaunch = openIfMissing;
   for (;;) {
-    let response;
-    try {
-      response = await chrome.tabs.sendMessage(tab.id, { type: MSG_PAGE_REQUEST, payload: { requestId: newRequestId(), kind, args } });
-    } catch (err) {
-      // A tab opened before the extension was installed has no content script: repaired once, as for a dump.
-      if (!injected && isMissingReceiverError(err) && (await ensureContentScriptInjected(tab.id))) {
-        injected = true;
-        continue;
-      }
-      response = undefined;
+    const answer = await desktopLink.request(kind, args, { launch: mayLaunch, onTick: () => chrome.runtime.getPlatformInfo?.().catch?.(() => {}) });
+    mayLaunch = false;
+    if (answer.ok) {
+      if (kind === "projects") void recordDesktopProjects(answer.result);
+      return answer;
     }
-    const retry = !response || response.error === "not-ready";
-    if (!retry) return { ...response, hubbleTabId: tab.id };
-    if (Date.now() >= deadline) return { ok: false, error: response ? "not-ready" : "no-response" };
-    await sleep(500);
+    // Its window is still starting: ask again for a few seconds.
+    if (answer.error === "not-ready" && Date.now() < deadline) {
+      await sleep(500);
+      continue;
+    }
+    return { ok: false, error: LINK_ERRORS[answer.error] ?? answer.error };
   }
 }
 
+// The paired link's reasons, in the words every caller already handles (src/capture-queue.js keeps a save for each).
+const LINK_ERRORS = {
+  "desktop-not-running": "no-hubble-tab",
+  "desktop-not-responding": "no-response",
+  "desktop-busy": "no-response",
+  "timed-out": "timeout",
+};
+
+/** Hubble Desktop's answer to "projects" is the newest list there is: the popup's snapshot follows it. */
+function recordDesktopProjects(result) {
+  const projects = Array.isArray(result?.projects) ? result.projects.filter((project) => typeof project?.id === "string" && typeof project?.name === "string").map(({ id, name }) => ({ id, name })) : undefined;
+  if (!projects) return Promise.resolve();
+  return recordProjectsReport({ revision: Date.now(), projects }).catch((err) => log("projects-snapshot-failed", errorMessage(err)));
+}
+
+/** The pre-desktop delivery to a Hubble tab; no longer reached (Hubble on the web no longer runs the app). */
 // What each AI app's tab last showed of its desktop save: each save reports in its own tab, so two at once never cross.
 const saveShown = new Map();
 
@@ -1540,8 +1058,11 @@ async function captureIdentified(tabId, tab, identity, workspaceId, { viaDesktop
   // The address Chrome reports wins over the page's own: it is what the person is looking at.
   const capture = { url: tab.url, title: checked.title || tab.title || "", turns: checked.turns };
 
-  // A save Hubble on the web asked for (context suggestions) stays with Hubble on the web.
-  if (viaDesktop) {
+  // Paired with Hubble Desktop and a project chosen in the popup: straight in, as a job written down first (below),
+  // so a closed popup, a stopped worker or a Hubble that isn't open yet loses nothing. Not paired: Hubble Desktop's
+  // own window asks which project it goes to.
+  const paired = Boolean(await desktopLink.stored());
+  if (viaDesktop && !(paired && workspaceId)) {
     saveShown.delete(tabId);
     const sentToDesktop = await desktopSave(
       { ...capture, provider: identity.provider, key: identity.key, truncated: read?.truncated === true },
@@ -1550,12 +1071,12 @@ async function captureIdentified(tabId, tab, identity, workspaceId, { viaDesktop
     if (!sentToDesktop.fallback) {
       return withReadNotes(answerFromDesktop(sentToDesktop), checked);
     }
+    // Hubble Desktop isn't open and this extension isn't paired: nothing to keep it for — the person connects first.
+    if (!paired) return { ok: false, error: "not-paired" };
   }
-  // Hubble Desktop isn't open: Hubble on the web, into the project chosen in the popup — as a job that is written
-  // down before it is delivered, so a closed popup, a stopped worker or a Hubble page that answers late loses nothing.
   if (!workspaceId) return { ok: false, error: "no-project" };
   const notes = { ...(checked.olderNotLoaded ? { olderNotLoaded: true } : {}), ...(checked.partial ? { partial: true } : {}) };
-  const job = await captureQueue.submit({ key: identity.key, provider: identity.provider, workspaceId, projectName: await snapshotProjectName(workspaceId), capture, truncated: read?.truncated === true, notes, ...(owner ? { owner } : {}) });
+  const job = await captureQueue.submitAndWatch({ key: identity.key, provider: identity.provider, workspaceId, projectName: await snapshotProjectName(workspaceId), capture, truncated: read?.truncated === true, notes, ...(owner ? { owner } : {}) });
   return answerFromJob(job);
 }
 
@@ -1620,11 +1141,15 @@ function scheduleCaptureRetry(at) {
   }
 }
 
-const captureQueue = createCaptureQueue({
+const captureQueueCore = createCaptureQueue({
   storage: captureStorage,
   deliver: async (job, { openIfMissing }) => {
     // A context save is delivered only while the browser is still signed in as the account that asked for it.
-    if (job.owner && (await contextIdentity.currentOwner()) !== job.owner) return { ok: false, error: "identity-changed" };
+    // (Asked by Hubble Desktop: while this extension is still paired with it — the link is what identified the account.)
+    if (job.owner) {
+      const current = job.owner.startsWith("desktop:") ? ((await desktopLink.stored()) ? job.owner : "not-paired") : await contextIdentity.currentOwner();
+      if (current !== job.owner) return { ok: false, error: "identity-changed" };
+    }
     return askHubblePage("capture", { workspaceId: job.workspaceId, captureId: job.id, capture: job.capture }, { openIfMissing });
   },
   schedule: scheduleCaptureRetry,
@@ -1633,14 +1158,195 @@ const captureQueue = createCaptureQueue({
   log,
 });
 
+// The queue, plus: a save left waiting is watched for until Hubble Desktop can take it.
+const captureQueue = Object.assign(Object.create(null), captureQueueCore, {
+  async submitAndWatch(input) {
+    const job = await captureQueueCore.submit(input);
+    if (job?.status === "queued" || job?.status === "saving") startDesktopWatch();
+    return job;
+  },
+});
+
 function flushCaptures(reason) {
-  return captureQueue.flush({ reason }).catch((err) => log("capture-flush-failed", { reason, detail: errorMessage(err) }));
+  return captureQueue
+    .flush({ reason })
+    .then(async (result) => {
+      // Anything still waiting is looked after until Hubble Desktop can take it.
+      const waiting = ((await captureQueue.all().catch(() => [])) ?? []).some((job) => job.status === "queued" || job.status === "saving");
+      if (waiting) startDesktopWatch();
+      return result;
+    })
+    .catch((err) => log("capture-flush-failed", { reason, detail: errorMessage(err) }));
 }
 
 // Registered at module scope, as MV3 requires for an event that wakes a stopped worker.
 chrome.alarms?.onAlarm?.addListener((alarm) => {
   if (alarm?.name === CAPTURE_RETRY_ALARM) void flushCaptures("alarm");
+  if (alarm?.name === DESKTOP_WATCH_ALARM) void watchForDesktop();
 });
+
+/**
+ * While saves wait for Hubble Desktop (it wasn't running, or wasn't paired),
+ * look for it once a minute — one loopback request, nothing else — and hand
+ * them over as soon as it answers. Stops itself when nothing is waiting.
+ */
+async function watchForDesktop() {
+  let waiting = [];
+  try {
+    waiting = (await captureQueue.all()) ?? [];
+  } catch {
+    waiting = [];
+  }
+  const pending = waiting.filter((job) => job.status === "queued" || job.status === "saving");
+  if (await desktopLink.stored()) serveDesktopCommands("alarm", { forMs: 5000 });
+  if (pending.length === 0) {
+    globalThis.chrome?.alarms?.clear?.(DESKTOP_WATCH_ALARM)?.catch?.(() => {});
+    return;
+  }
+  const link = await desktopLink.status().catch(() => ({ running: false }));
+  if (link.running && link.paired) await flushCaptures("desktop-ready");
+}
+
+function startDesktopWatch() {
+  try {
+    globalThis.chrome?.alarms?.create(DESKTOP_WATCH_ALARM, { periodInMinutes: 1 })?.catch?.(() => {});
+  } catch {
+    // No alarms: the popup, the next save and the next worker start still deliver.
+  }
+}
+
+// ---- Pairing (src/desktop-link.js) --------------------------------------------
+
+const desktopLink = createDesktopLink({
+  storage: {
+    get: async () => (await chrome.storage.local.get(LINK_KEY))?.[LINK_KEY],
+    set: (link) => chrome.storage.local.set({ [LINK_KEY]: link }),
+    clear: () => chrome.storage.local.remove(LINK_KEY),
+  },
+  fetch: (...args) => globalThis.fetch(...args),
+  sleep,
+  launch: launchDesktop,
+  log,
+});
+
+// ---- Commands from Hubble Desktop (src/desktop-link.js) ---------------------
+//
+// Hubble Desktop asks Chrome things (the tabs open now, a history range,
+// opening a saved session, context detection) by queueing a command on the
+// paired link; this worker collects and answers. It collects while it has
+// reason to expect one — Hubble opened its wake address, Hubble was nudged
+// about context activity, the worker just started, the once-a-minute watch —
+// and for a short while after the last command, since the person tends to ask
+// again. Each command goes through the same allowlist and validator as a
+// page's (browser-commands.js); context commands belong to the account Hubble
+// Desktop is signed in as, which the link — held only by that app — vouches for.
+
+/** Keep collecting this long after the last command. */
+const DESKTOP_SERVE_IDLE_MS = 30000;
+const DESKTOP_SERVE_POLL_MS = 700;
+let desktopServing = false;
+let desktopServeUntil = 0;
+
+function serveDesktopCommands(reason, { forMs = DESKTOP_SERVE_IDLE_MS } = {}) {
+  desktopServeUntil = Math.max(desktopServeUntil, Date.now() + forMs);
+  if (desktopServing) return;
+  desktopServing = true;
+  void (async () => {
+    let port;
+    let served = 0;
+    try {
+      while (Date.now() < desktopServeUntil) {
+        // Each round reads the link from chrome.storage, which also keeps this worker awake while it waits.
+        const collected = await desktopLink.collectCommands({ port });
+        if (!collected.ok) {
+          log("desktop-commands-stopped", { reason, error: collected.error });
+          break;
+        }
+        port = collected.port;
+        if (collected.commands.length === 0) {
+          await sleep(DESKTOP_SERVE_POLL_MS);
+          continue;
+        }
+        desktopServeUntil = Math.max(desktopServeUntil, Date.now() + DESKTOP_SERVE_IDLE_MS);
+        await Promise.all(
+          collected.commands.map(async (command) => {
+            const response = await handleDesktopCommand(command);
+            served += 1;
+            await desktopLink.sendResult(port, response);
+          })
+        );
+      }
+    } catch (err) {
+      log("desktop-commands-failed", { reason, detail: errorMessage(err) });
+    } finally {
+      desktopServing = false;
+      if (served > 0) log("desktop-commands-served", { reason, served });
+    }
+  })();
+}
+
+/** Runs one command Hubble Desktop sent. Resolves `{ id, ok, result | error }`; never throws. */
+async function handleDesktopCommand({ id, action, args }) {
+  if (!DESKTOP_COMMAND_ACTIONS.includes(action)) return { id, ok: false, error: "Hubble Desktop doesn't ask Chrome that." };
+  const validated = validateBrowserCommand(action, args);
+  if (!validated.ok) return { id, ok: false, error: validated.error };
+  const handler = CONTEXT_HANDLERS[action] ?? BROWSER_ACTION_HANDLERS[action];
+  if (!handler) return { id, ok: false, error: `No handler registered for "${action}".` };
+  try {
+    const commandArgs = CONTEXT_ACTIONS.includes(action) ? { ...validated.args, owner: await ownerForDesktopAccount(validated.args.account) } : validated.args;
+    const result = await handler(commandArgs, {});
+    return { id, ok: true, result };
+  } catch (err) {
+    return { id, ok: false, error: err instanceof Error ? err.message : "Browser command failed." };
+  }
+}
+
+let pairing = false;
+
+async function setPairState(state) {
+  try {
+    await chrome.storage?.session?.set({ [PAIR_STATE_KEY]: { ...state, updatedAt: Date.now() } });
+  } catch {
+    // The popup then reads the outcome from the desktop status instead.
+  }
+}
+
+/** Connects to Hubble Desktop: asks, shows the code, waits for the person in Hubble's window. */
+async function pairWithDesktop() {
+  if (pairing) return;
+  pairing = true;
+  try {
+    await setPairState({ status: "starting" });
+    const begun = await desktopLink.beginPairing(await pairingLabel());
+    if (begun.error) {
+      await setPairState({ status: "failed", error: begun.error });
+      return;
+    }
+    await setPairState({ status: "waiting", code: begun.code });
+    const answer = await desktopLink.awaitPairing(begun, { onTick: () => setPairState({ status: "waiting", code: begun.code }) });
+    await setPairState({ status: answer.status });
+    if (answer.status === "approved") {
+      await markDesktopSeen();
+      void flushCaptures("desktop-paired");
+    }
+  } catch (err) {
+    log("pair-failed", errorMessage(err));
+    await setPairState({ status: "failed", error: "desktop-not-responding" });
+  } finally {
+    pairing = false;
+  }
+}
+
+/** "Chrome on Windows" — what Hubble's Settings calls this install. Never a profile or account name. */
+async function pairingLabel() {
+  try {
+    const info = await chrome.runtime.getPlatformInfo();
+    const os = { win: "Windows", mac: "macOS", linux: "Linux", cros: "ChromeOS" }[info?.os] ?? "this computer";
+    return `Chrome on ${os}`;
+  } catch {
+    return "Hubble for Chrome";
+  }
+}
 
 // A fresh worker (Chrome started, or the last one was stopped mid-save): pick up whatever was left waiting.
 void captureQueue
@@ -1966,6 +1672,8 @@ function nudgeHubblePages() {
     for (const tab of tabs) {
       if (Number.isInteger(tab.id) && !tab.discarded) chrome.tabs.sendMessage(tab.id, { type: "HUBBLE_CONTEXT_CHANGED" }).catch(() => {});
     }
+    // Hubble Desktop hears it over the paired link, then asks (get_context_activity): stay to answer.
+    if ((await desktopLink.stored()) && (await desktopLink.nudge())) serveDesktopCommands("nudge", { forMs: 10000 });
   }, 3000);
 }
 
@@ -2017,6 +1725,15 @@ function scheduleContextRead(tab) {
 
 // Registered at module scope, as MV3 requires for events that wake a stopped worker.
 chrome.tabs.onUpdated?.addListener((tabId, changeInfo, tab) => {
+  // Hubble Desktop opened its wake address because it is waiting on this extension: close it and collect.
+  const wakeUrl = changeInfo?.url ?? tab?.url;
+  if (isDesktopWakeUrl(wakeUrl)) {
+    chrome.tabs.remove(tabId).catch(() => {});
+    // Not a page the person visited: kept out of Chrome's history (and so out of History Dump).
+    chrome.history?.deleteUrl?.({ url: wakeUrl })?.catch?.(() => {});
+    serveDesktopCommands("wake");
+    return;
+  }
   if (tab?.incognito || changeInfo?.discarded) return;
   if (changeInfo?.status === "complete") {
     // A page that loads in the tab in front is where the person is now (they followed a link or typed an address).

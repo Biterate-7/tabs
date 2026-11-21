@@ -116,21 +116,77 @@ export const desktopAccount = {
   },
 };
 
-/** Asking Chrome through the person's browser (src-tauri/src/import_bridge.rs, "The relay"). */
-export const desktopChromeRelay = {
-  /** Opens the relay page; resolves the relay id to wait on. */
-  begin(action: "browser_tabs" | "history", args: Record<string, unknown>): Promise<string> {
-    return invokeCommand<string>("desktop_relay_begin", { action, args });
+/** localStorage's durable copy (src-tauri/src/durable_store.rs; used by ./durable-storage.ts). */
+export const desktopDurableStore = {
+  read(): Promise<{ complete: boolean; entries: Record<string, string> }> {
+    return invokeCommand("durable_store_read", {});
   },
-  take(id: string): Promise<{ ok: true; result: unknown } | { ok: false; error: string } | null> {
-    return invokeCommand("desktop_relay_take", { id });
+  write(changes: { key: string; value: string | null }[], options: { clear: boolean; seed: boolean }): Promise<void> {
+    return invokeCommand<void>("durable_store_write", { changes, clear: options.clear, seed: options.seed });
   },
-  cancel(id: string): Promise<void> {
-    return invokeCommand<void>("desktop_relay_cancel", { id });
+};
+
+/** A pairing request from Hubble for Chrome, waiting for the person (src-tauri/src/extension_link.rs). */
+export type DesktopPairingRequest = { id: string; code: string; label: string; extensionId: string; expiresInMs: number };
+/** A paired Hubble for Chrome install, as Settings lists it. */
+export type DesktopExtensionLink = { id: string; label: string; extensionId: string; createdAt: number; lastUsedAt: number | null };
+
+/**
+ * Hubble for Chrome ⇄ Hubble Desktop, paired (src-tauri/src/extension_link.rs):
+ * the pairing dialog's requests and answers, Settings' list of paired
+ * installs, and the extension's requests for the webview to answer.
+ */
+export const desktopExtensionLink = {
+  pendingPairings(): Promise<DesktopPairingRequest[]> {
+    return invokeCommand<DesktopPairingRequest[]>("desktop_pair_pending", {});
   },
-  async onDelivered(handler: (id: string) => void): Promise<() => void> {
+  answerPairing(id: string, approve: boolean): Promise<void> {
+    return invokeCommand<void>("desktop_pair_answer", { id, approve });
+  },
+  list(): Promise<DesktopExtensionLink[]> {
+    return invokeCommand<DesktopExtensionLink[]>("desktop_link_list", {});
+  },
+  revoke(id: string): Promise<boolean> {
+    return invokeCommand<boolean>("desktop_link_revoke", { id });
+  },
+  take(): Promise<unknown[]> {
+    return invokeCommand<unknown[]>("desktop_link_take", {});
+  },
+  answer(requestId: string, answer: { ok: true; result: unknown } | { ok: false; error: string }): Promise<void> {
+    return invokeCommand<void>("desktop_link_answer", { requestId, answer });
+  },
+  /** Whether a Hubble for Chrome is paired with this app. */
+  paired(): Promise<boolean> {
+    return invokeCommand<boolean>("desktop_link_paired", {});
+  },
+  /**
+   * Asks the paired Hubble for Chrome to run one browser command
+   * ("Commands from Hubble" in extension_link.rs). Never rejects: a refusal,
+   * an unpaired app and a timeout are `{ ok: false, error }`. `wake` (for
+   * something the person just asked for) lets Hubble wake Chrome when the
+   * extension is asleep; background reads leave it off.
+   */
+  async command(action: string, args: unknown, options: { timeoutMs: number; wake: boolean }): Promise<{ ok: true; result: unknown } | { ok: false; error: string }> {
+    try {
+      const answer = await invokeCommand<{ ok?: unknown; result?: unknown; error?: unknown }>("desktop_link_command", { action, args, timeoutMs: options.timeoutMs, wake: options.wake });
+      if (answer?.ok === true) return { ok: true, result: answer.result };
+      return { ok: false, error: typeof answer?.error === "string" ? answer.error : "failed" };
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  },
+  /** Hears when the paired extension says something it keeps changed (context detection's activity). */
+  async onNudge(handler: () => void): Promise<() => void> {
     const { listen } = await import("@tauri-apps/api/event");
-    return listen<{ id: string }>("hubble-relay:delivered", (event) => handler(event.payload.id));
+    return listen("hubble-link:nudge", () => handler());
+  },
+  async onPairRequested(handler: () => void): Promise<() => void> {
+    const { listen } = await import("@tauri-apps/api/event");
+    return listen("hubble-link:pair-requested", () => handler());
+  },
+  async onRequest(handler: () => void): Promise<() => void> {
+    const { listen } = await import("@tauri-apps/api/event");
+    return listen("hubble-link:request", () => handler());
   },
 };
 

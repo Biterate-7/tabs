@@ -98,10 +98,11 @@ combination; the originals never change.
 
 The app can't call Hubble for Chrome directly, so it uses the paths it has:
 
-- **Save current session / Replace with open tabs:** the same dialog, reading
-  Chrome through the relay (docs/desktop-architecture.md, "Asking Chrome"):
-  a Hubble page opens in the browser, and nothing is read until the person
-  presses Send there. Needs Hubble for Chrome 0.9.0.
+- **Save current session / Replace with open tabs:** the same dialog, asking
+  the paired Hubble for Chrome (docs/desktop-architecture.md, "Asking Chrome:
+  commands over the paired link"). Needs Hubble for Chrome 0.11.0, paired.
+- **Start a session:** paired, a new Chrome window (`open_session`); not
+  paired, the default browser, tab by tab.
 - **Save from Chrome:** right-click a tab → Hubble → Add to Hubble Desktop,
   and choose **Save as a session** instead of a project.
 - **Start:** `restoreTabs` gets `DESKTOP_UNREACHABLE` from the browser

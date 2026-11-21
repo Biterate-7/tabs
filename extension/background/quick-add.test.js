@@ -15,8 +15,10 @@ import {
   MENU_ADD_PAGE,
   QUICK_ADD_COMMAND,
 } from "../src/config.js";
+import { pairedDesktopFetch, pairedStorage } from "../test-support/paired-desktop.js";
 
 const MSG_TABDUMP_IMPORT = "TABDUMP_IMPORT";
+const realFetch = globalThis.fetch;
 const HISTORY = { id: "ws-history", name: "History IA" };
 
 function fakeTab(over) {
@@ -42,13 +44,25 @@ let ack;
 
 beforeEach(() => {
   messageListeners = [];
-  local = { [TARGET_PROJECT_KEY]: HISTORY };
+  local = pairedStorage({ [TARGET_PROJECT_KEY]: HISTORY });
   delivered = [];
   toasts = [];
   menus = [];
   handlers = {};
   statusAnswers = [];
   ack = (payload) => ({ ok: true, accepted: payload.tabs.length });
+  // Hubble is a desktop app: quick add goes to a paired Hubble Desktop as one "add-sources" request.
+  globalThis.fetch = pairedDesktopFetch({
+    answer: async (request) => {
+      const payload = { tabs: request.args.tabs, target: { workspaceId: request.args.workspaceId } };
+      delivered.push(payload);
+      const answer = ack(payload);
+      if (answer.reason === "project-missing") return { ok: false, error: "project-missing" };
+      if (!answer.ok) return { ok: false, error: answer.reason ?? "failed" };
+      const names = { "ws-history": "History IA", "ws-physics": "Physics EE" };
+      return { ok: true, result: { added: answer.accepted ?? 0, duplicates: answer.duplicates ?? 0, failed: 0, project: names[request.args.workspaceId] } };
+    },
+  });
   const event = (name) => ({ addListener: vi.fn((fn) => (handlers[name] = fn)), removeListener: vi.fn() });
   globalThis.chrome = {
     runtime: { onMessage: { addListener: vi.fn((fn) => messageListeners.push(fn)) }, onInstalled: event("installed"), onStartup: event("startup"), lastError: undefined },
@@ -113,6 +127,7 @@ beforeEach(() => {
 
 afterEach(() => {
   delete globalThis.chrome;
+  globalThis.fetch = realFetch;
   vi.resetModules();
 });
 
@@ -164,16 +179,11 @@ describe("the tab-strip menu", () => {
     await until(() => finalToast());
     expect(delivered).toHaveLength(1);
     expect(delivered[0].tabs.map((tab) => tab.url)).toEqual([WINDOW[0].url, WINDOW[1].url]);
-    expect(delivered[0].target).toEqual({ workspaceId: "ws-history", as: "sources" });
+    expect(delivered[0].target).toEqual({ workspaceId: "ws-history" });
     // Shown in the tab the person is looking at, from "Adding…" to the result.
     expect(toasts[0]).toMatchObject({ tabId: 1, tone: "working", title: "Adding to History IA…" });
-    expect(toasts[1]).toMatchObject({ tabId: 1, tone: "working", title: "Adding to History IA…", status: "Reading source…" });
+    expect(toasts[1]).toMatchObject({ tabId: 1, tone: "done", title: "Added 2 sources to History IA" });
     expect(toasts[1].source).toBeUndefined();
-    expect(finalToast()).toMatchObject({ tabId: 1, tone: "done", title: "Added 2 sources to History IA", focus: { tabId: 42, windowId: 20 } });
-    // Marked, so a popup opened right after doesn't replay what the toast already said.
-    const persisted = chrome.storage.session.set.mock.calls.at(-1)[0].tabdump_dump_state;
-    expect(persisted).toMatchObject({ via: "quick-add", status: "done" });
-    expect(JSON.stringify(persisted)).not.toContain("britannica");
   });
 
   it("adds just a right-clicked tab that is not selected, even when it isn't the one on screen", async () => {
@@ -184,30 +194,17 @@ describe("the tab-strip menu", () => {
     expect(finalToast()).toMatchObject({ tabId: 1, tone: "done", title: "Added to History IA", source: "Other" });
   });
 
-  it("names the project and the source, and follows reading until it settles", async () => {
-    statusAnswers = [
-      { ok: true, statuses: [{ url: WINDOW[2].url, status: "pending" }] },
-      { ok: true, statuses: [{ url: WINDOW[2].url, status: "processing" }] },
-      { ok: true, statuses: [{ url: WINDOW[2].url, status: "ready", detail: "1,840 words" }] },
-    ];
+  it("names the project and the source it added in Hubble Desktop", async () => {
     await load();
     handlers.menuClicked({ menuItemId: MENU_ADD_TAB }, WINDOW[2]);
     await until(() => finalToast(), 8000);
-    expect(toasts.map(({ tone, title, source, status }) => ({ tone, title, source, status }))).toEqual([
-      { tone: "working", title: "Adding to History IA…", source: undefined, status: undefined },
-      { tone: "working", title: "Adding to History IA…", source: "Other", status: "Reading source…" },
-      { tone: "done", title: "Added to History IA", source: "Other", status: "Ready · 1,840 words" },
+    expect(toasts.map(({ tone, title, source }) => ({ tone, title, source }))).toEqual([
+      { tone: "working", title: "Adding to History IA…", source: undefined },
+      { tone: "done", title: "Added to History IA", source: "Other" },
     ]);
-    expect(finalToast().focus).toEqual({ tabId: 42, windowId: 20 });
-    expect(chrome.tabs.sendMessage).toHaveBeenCalledWith(42, { type: MSG_SOURCE_STATUS, payload: { workspaceId: "ws-history", urls: [WINDOW[2].url] } });
-  });
-
-  it("says a source Hubble couldn't read was still added, and why it couldn't be read", async () => {
-    statusAnswers = [{ ok: true, statuses: [{ url: WINDOW[2].url, status: "failed", detail: "The site didn't answer" }] }];
-    await load();
-    handlers.menuClicked({ menuItemId: MENU_ADD_PAGE }, WINDOW[2]);
-    await until(() => finalToast(), 6000);
-    expect(finalToast()).toMatchObject({ tone: "done", title: "Added to History IA", status: "Couldn't read · The site didn't answer" });
+    expect(delivered).toEqual([{ tabs: [{ url: WINDOW[2].url, title: "Other" }], target: { workspaceId: "ws-history" } }]);
+    // Hubble Desktop reads the source and shows it there; nothing asks a Hubble tab.
+    expect(chrome.tabs.sendMessage).not.toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ type: MSG_SOURCE_STATUS }));
   });
 
   it("says a tab already in the project is already there, naming the project", async () => {
@@ -305,7 +302,7 @@ describe("the project open in Hubble", () => {
     expect(local[TARGET_PROJECT_KEY]).toEqual({ id: "ws-physics", name: "Physics EE" });
     handlers.menuClicked({ menuItemId: MENU_ADD_TAB }, WINDOW[2]);
     await until(() => finalToast());
-    expect(delivered[0].target).toEqual({ workspaceId: "ws-physics", as: "sources" });
+    expect(delivered[0].target).toEqual({ workspaceId: "ws-physics" });
     expect(finalToast()).toMatchObject({ title: "Added to Physics EE" });
   });
 

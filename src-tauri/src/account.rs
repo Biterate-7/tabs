@@ -28,7 +28,7 @@ use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_opener::OpenerExt;
 
 /// The deployed Hubble this app signs in to.
-pub const DEFAULT_ACCOUNT_ORIGIN: &str = "https://hubble-hq.vercel.app";
+pub const DEFAULT_ACCOUNT_ORIGIN: &str = "https://hubblehq.vercel.app";
 /// Told to the webview whenever the signed-in state may have changed.
 pub const ACCOUNT_CHANGED_EVENT: &str = "hubble-account:changed";
 
@@ -54,6 +54,11 @@ pub fn account_origin() -> &'static str {
 pub fn open_in_browser(app: &AppHandle, url: &tauri::Url) -> Result<(), String> {
     if cfg!(debug_assertions) && option_env!("HUBBLE_QA_ECHO_URLS").is_some() {
         eprintln!("[hubble-qa] open {url}");
+    }
+    // QA rigs that drive their own Chrome (not the person's default browser) open the address themselves.
+    // Debug builds compiled with this variable only; a release build always opens.
+    if cfg!(debug_assertions) && option_env!("HUBBLE_QA_NO_OPEN").is_some() {
+        return Ok(());
     }
     app.opener().open_url(url.to_string(), None::<&str>).map_err(|e| e.to_string())
 }
@@ -472,7 +477,7 @@ mod tests {
 
     #[test]
     fn origin_override_is_https_or_loopback_only() {
-        assert!(is_allowed_origin("https://hubble-hq.vercel.app"));
+        assert!(is_allowed_origin("https://hubblehq.vercel.app"));
         assert!(is_allowed_origin("http://localhost:3000"));
         assert!(is_allowed_origin("http://127.0.0.1:3000"));
         for bad in ["http://evil.example", "ftp://x", "https://x/path", "https://user@x", "not a url"] {

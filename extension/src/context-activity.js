@@ -82,8 +82,9 @@ export function readContextSettings(raw) {
   settings.paused = raw.paused === true;
   if (settings.paused && Number.isFinite(raw.pausedUntil) && raw.pausedUntil > 0) settings.pausedUntil = raw.pausedUntil;
   if (Array.isArray(raw.readConversations)) settings.readConversations = AI_PROVIDERS.filter((id) => raw.readConversations.includes(id));
-  // The identity that opted in, as Hubble's server confirmed it (context-identity.js). Only that one is answered.
-  if (typeof raw.owner === "string" && /^(signed-out|user:[0-9a-f]{64})$/.test(raw.owner)) settings.owner = raw.owner;
+  // The identity that opted in: a browser session Hubble's server confirmed (context-identity.js), or the account Hubble Desktop
+  // named over the paired link ("desktop:" — ownerForDesktopAccount). Only that one is answered.
+  if (typeof raw.owner === "string" && /^(signed-out|user:[0-9a-f]{64}|desktop:[0-9a-f]{64})$/.test(raw.owner)) settings.owner = raw.owner;
   if (RETENTION.includes(raw.retentionDays)) settings.retentionDays = raw.retentionDays;
   return settings;
 }

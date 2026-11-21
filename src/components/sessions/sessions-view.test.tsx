@@ -4,8 +4,6 @@ import userEvent from "@testing-library/user-event"
 
 const restoreTabs = vi.fn()
 vi.mock("@/lib/sessions/restore", () => ({ restoreTabs: (...args: unknown[]) => restoreTabs(...args) }))
-// In Hubble Desktop, reading Chrome waits on the person in their browser: here it never answers.
-vi.mock("@/lib/browser/desktop-relay", () => ({ askChromeForTabs: () => new Promise(() => {}) }))
 vi.mock("sonner", async (importOriginal) => {
   const actual = await importOriginal<typeof import("sonner")>()
   const toast = Object.assign(vi.fn(), { success: vi.fn(), error: vi.fn(), warning: vi.fn() })
@@ -247,7 +245,7 @@ describe("Sessions in Hubble Desktop", () => {
     seed("Essay", ["https://essay.example/", "https://notes.example/"], NOW)
     view()
 
-    expect(screen.getByText(/reopen them together later, in your default browser/)).toBeTruthy()
+    expect(screen.getByText(/reopen them together later. Hubble asks Hubble for Chrome each time/)).toBeTruthy()
     // Saving reads Chrome through the browser (readChromeTabs), so it is offered here too.
     expect(screen.getByRole("button", { name: /Save current session/ })).toBeTruthy()
 
@@ -260,9 +258,11 @@ describe("Sessions in Hubble Desktop", () => {
     expect(getSessionsSnapshot().sessions[0]!.lastRestoredAt).toBeTypeOf("number")
   })
 
-  it("tells the person where to approve reading Chrome when saving", async () => {
+  it("says it is asking Chrome when saving", async () => {
+    // Chrome is asked over the paired link; here it never answers.
+    ;(window as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = { invoke: () => new Promise(() => {}) }
     render(<SessionsView projects={[]} now={NOW} openSaveOnMount />)
     const dialog = await screen.findByRole("dialog")
-    expect(within(dialog).getByText(/Waiting for Chrome\. A Hubble page opened in your browser/)).toBeTruthy()
+    expect(within(dialog).getByText("Asking Chrome for your open tabs…")).toBeTruthy()
   })
 })

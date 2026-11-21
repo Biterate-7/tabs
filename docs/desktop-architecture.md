@@ -1,5 +1,11 @@
 # Hubble Desktop (Tauri) — architecture
 
+> **Since 2026-11-19 Hubble is desktop-first:** the website no longer runs the
+> app (it is the launch and download site), and Hubble for Chrome pairs with
+> Hubble Desktop. Start with [hubble-desktop-first.md](hubble-desktop-first.md);
+> the "Web Application" surface and the extension-to-website paths below are
+> history.
+
 Hubble ships from one codebase to three surfaces:
 
 ```
@@ -110,7 +116,7 @@ and the frontend holds no plugin permission at all.
 | `export_text_file(suggested_name, contents)` | Filename + text in, `bool` out | Takes a *name*, never a path. The path comes from the native save dialog the user just used, so the only file the app can write is one the user picked by hand |
 | `account_status` / `account_sign_in_begin` / `account_sign_in_complete(code)` / `account_sign_out` | Signed-in state out (never the token) | See "Authentication" below: PKCE pairing, the token kept in the OS credential store |
 | `account_request(method, path, body)` | An allowlisted account API path and a JSON body in; status and body out | The host is fixed at build time and the token is attached in Rust; only `/api/auth/me`, `/api/sync/*`, `/api/integrations*`, `/api/mcp/tokens` |
-| `desktop_relay_begin(action, args)` / `desktop_relay_take(id)` / `desktop_relay_cancel(id)` | One of two known questions for Chrome; its answer, once | See "Asking Chrome: the relay" below |
+| `desktop_link_paired()` / `desktop_link_command(action, args, timeout_ms, wake)` | Whether a Hubble for Chrome is paired; one allowlisted browser command for it, and its answer | See "Asking Chrome: commands over the paired link" below |
 | `app_info()` | Nothing in; version, Tauri version, OS, arch, debug out | Compile-time constants only (`package_info().version`, `std::env::consts`). Settings → Desktop app shows them, and compares the version with `/api/desktop/release` on the deployed site to offer a newer installer |
 
 The **navigation guard** (`src-tauri/src/lib.rs`) is the backstop: any
@@ -312,37 +318,81 @@ point the extension keeps dumping into the web app and both clients read
 the same account.
 
 Likewise **History Dump** needs `chrome.history`, which only the extension
-can reach, so its scan is unavailable on desktop and shows the existing
-"extension not connected" state. Its scoring and selection logic is
-untouched and shared.
+can reach; Hubble Desktop asks the paired extension for the range (below).
+Its scoring and selection logic is untouched and shared.
 
-### Asking Chrome: the relay
+### Asking Chrome: commands over the paired link
 
 The import bridge only carries what the extension chose to send. Some
 features need the app to *ask*: which tabs are open (Save current session,
-Organize open tabs, Add → Browser tabs) and what was visited in a range
-(Import from history). The app can't call Chrome and the extension can't be
-called, so the question goes through the person's browser
-(`src-tauri/src/import_bridge.rs`, "The relay"):
+Organize open tabs, Add → Browser tabs), what was visited in a range
+(Import from history), opening a saved session in a Chrome window, and
+context detection's settings and activity. The app can't call an extension,
+so it queues the command on the paired link and the extension collects it
+(`src-tauri/src/extension_link.rs`, "Commands from Hubble"):
 
 ```
-app ── desktop_relay_begin ──▶ opens {hubble}/desktop/relay#id=…&secret=…&port=…&action=…
-relay page: says exactly what is asked → Send, or Don't send
-relay page ── list_browser_tabs / list_browser_windows / get_history ──▶ Hubble for Chrome
-relay page ── deliver_to_desktop ──▶ extension ── POST 127.0.0.1:port/v1/relay/:id  Bearer secret
-app ◀── "hubble-relay:delivered" ── desktop_relay_take ── webview validates and shows it
+webview ── desktop_link_command(action, args) ──▶ queued (allowlisted action, object args ≤ 64 KB)
+                         (extension asleep, and the person asked) ──▶ opens http://127.0.0.1:<port>/v1/wake
+extension ── POST /v1/link/commands  Bearer token ──▶ { commands: [{ id, action, args }] }
+extension: validateBrowserCommand (the same validator a page's command passes) → chrome.*
+extension ── POST /v1/link/result    Bearer token ──▶ { id, ok, result | error } → the webview's await resolves
+extension ── POST /v1/link/nudge     Bearer token ──▶ "hubble-link:nudge" (context activity changed; carries nothing)
 ```
 
-- The id and secret live in the URL **fragment**, which no server sees, and
-  the page clears it once read.
-- Delivery has to come from a `chrome-extension://` origin (the bridge's
-  rule for every POST) with the secret, compared in constant time. Each relay
-  answers once, for one named action, and expires after five minutes.
-- Opt-in only: each request opens a browser tab, so nothing in the app reads
-  Chrome in the background. `src/lib/browser/read-tabs.ts` is the one reader
-  both shells use.
-- Needs Hubble for Chrome 0.9.0 (`deliver_to_desktop`). An older extension
-  gets "Update Hubble for Chrome" on the relay page.
+- **Hubble proves itself first.** Another program — on a shared computer,
+  another person's account — can listen on Hubble's ports while Hubble is
+  closed or before it starts. So before the extension sends its token or
+  anything it read, it posts a random challenge to `POST /v1/link/prove`;
+  Hubble answers HMAC-SHA-256(key = SHA-256 hex of each paired token,
+  "hubble-link-proof:v1:<port>:<challenge>"), and the extension only talks to
+  a port whose answer matches its own token. A port that answers without the
+  proof makes the extension forget its token (forgetting leaks nothing).
+  Origin headers are not authentication against local programs; the token
+  and this proof are.
+- Commands travel only over the authenticated link (token + extension
+  origin). The wake address answers nothing but "Hubble is here"; a page or
+  another extension can neither read nor inject a command.
+- Thirteen actions (`LINK_COMMAND_ACTIONS`, pinned against the extension by
+  `src/lib/desktop/link-protocol.test.ts`); never the tab-closing,
+  pinning or window-moving ones.
+- Only a command the person just asked for wakes Chrome (`wake: true`,
+  at most once per 15 s, and not when the extension collected in the last
+  4 s). Reads Hubble makes by itself (title lookup, context detection's pull)
+  pass `background` and are answered only while the extension is awake —
+  which it is after each nudge. After a woken read Hubble refocuses its window.
+- Context commands belong to the account Hubble Desktop names; the extension
+  keys what it keeps as `desktop:<sha256>`, separate from any browser
+  session's, and delivers a context save only while still paired.
+- Nothing paired, or nothing collected in time: `desktop-unreachable`, and
+  callers fall back exactly as when the extension isn't installed (sessions
+  open in the default browser, the dialogs say how to connect).
+- Needs Hubble for Chrome 0.11.0 or later. This replaced the earlier relay
+  (a page on Hubble's website the person pressed Send on), so Hubble Desktop
+  no longer needs the website to reach Chrome.
+
+## Crash-safe local storage
+
+WebView2 writes localStorage to disk lazily and flushes on a normal close, so a
+crash, a force-quit or a power cut could lose the newest edits (measured: a
+project and its saved conversation, made under a minute before a kill). Hubble
+Desktop therefore keeps a durable copy:
+
+```
+start:  durable_store_read → complete? restore over localStorage : seed it from localStorage
+then:   localStorage.setItem / removeItem / clear → coalesced (~100 ms) → durable_store_write
+```
+
+- `src/lib/platform/durable-storage.ts` patches `Storage.prototype` for this
+  window's localStorage only; `DesktopOnlyGate` waits for the restore before
+  the app mounts.
+- `src-tauri/src/durable_store.rs` writes one file per key (named by SHA-256 of
+  the key) in `<app data>/durable-store`: temp file, sync, rename — a file is
+  always the old value or the new one. Writes run off the main thread.
+- The copy is authoritative only while `.complete` exists; any failed write
+  removes it, and the next start trusts localStorage and seeds again.
+- IndexedDB (conversation text, uploaded files) is not mirrored: it commits
+  per transaction.
 
 ## Data compatibility
 

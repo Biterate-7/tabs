@@ -2,16 +2,18 @@
 
 import { useEffect, useState, type CSSProperties, type ReactNode } from "react"
 import Link from "next/link"
-import { ArrowDown, ArrowRight, Menu, X } from "lucide-react"
+import { Menu, X } from "lucide-react"
 import { BrandMark } from "@/components/brand-mark"
 import { buttonVariants } from "@/components/ui/button"
 import { useIsDesktop } from "@/hooks/use-is-desktop"
-import { DOWNLOAD_PATH, desktopLinkLabel } from "@/lib/desktop/release"
+import { CONTACT_EMAIL } from "@/components/legal/legal-page"
+import { DOWNLOAD_PATH } from "@/lib/desktop/release"
 import { cn } from "@/lib/utils"
 import { RevealSection, revealStep } from "./reveal"
 
 /*
- * The landing page's frame: header, footer, containers, feature cards.
+ * The site's frame: header, footer, containers, feature cards — shared by
+ * the launch page, /download and /move.
  *
  * Geometry is the reference's, measured at 1440px: a 52px header on the page
  * ground with the mark at the container's left edge and the section links
@@ -34,19 +36,15 @@ export function Wordmark({ className }: { className?: string }) {
   )
 }
 
+/** Absolute, so the header works the same on every page of the site. */
 export const NAV_LINKS = [
-  { href: "#how-it-works", label: "How it works" },
-  { href: "#capture", label: "Capture" },
-  { href: "#find", label: "Find" },
-  { href: "#reuse", label: "Reuse" },
-  { href: "#agents", label: "Agents" },
+  { href: "/#how-it-works", label: "How it works" },
+  { href: "/#desktop-and-chrome", label: "Desktop + Chrome" },
+  { href: "/#capture", label: "Features" },
+  { href: "/download", label: "Download" },
 ] as const
 
-export type PrimaryAction = {
-  label: string
-  href?: string
-  onClick?: () => void
-}
+export type PrimaryAction = { label: string; href?: string; onClick?: () => void }
 
 export function ActionButton({ action, className, children }: { action: PrimaryAction; className: string; children: ReactNode }) {
   if (action.href) {
@@ -64,30 +62,19 @@ export function ActionButton({ action, className, children }: { action: PrimaryA
 }
 
 /**
- * The way to Hubble Desktop from the site's own pages, or `null` inside the
- * desktop app, where it would be offering the visitor what they already run.
+ * The way to the download page from the site's own pages, or `null` inside
+ * the desktop app, where it would be offering the visitor what they already run.
  */
 export function useDesktopLink(): { label: string; href: string } | null {
-  return useIsDesktop() ? null : { label: desktopLinkLabel(), href: DOWNLOAD_PATH }
+  return useIsDesktop() ? null : { label: "Download Hubble", href: DOWNLOAD_PATH }
 }
 
-export function SiteHeader({
-  install,
-  onOpenApp,
-  linkBase = "",
-  showDesktopLink = true,
-}: {
-  /** Hubble for Chrome — a store link, or the install guide. */
-  install: PrimaryAction
-  onOpenApp: () => void
-  /** Where the section anchors live, for a page other than the landing page ("/welcome"). */
-  linkBase?: string
-  /** False on the download page itself. */
-  showDesktopLink?: boolean
-}) {
+/** Hubble for Chrome, from any page: its store listing when there is one, else the download page's Chrome section. */
+export const CHROME_SECTION_HREF = `${DOWNLOAD_PATH}#chrome`
+
+export function SiteHeader({ install }: { /** Hubble for Chrome — a store link, or the download page's Chrome section. */ install: PrimaryAction }) {
   const [menuOpen, setMenuOpen] = useState(false)
-  const desktopLink = useDesktopLink()
-  const desktop = showDesktopLink ? desktopLink : null
+  const desktop = useDesktopLink()
 
   // The open menu covers the page: hold the page still under it, and let
   // Escape close it.
@@ -114,30 +101,27 @@ export function SiteHeader({
       <header className="m-header sticky top-0 z-(--hb-z-sticky)">
         <div className="m-page">
           <Container className="relative flex h-(--hb-header-h) items-center gap-4">
-            <Link href="/welcome" aria-label="Hubble home" className="shrink-0 rounded-xs outline-none focus-visible:ring-2 focus-visible:ring-ring">
+            <Link href="/" aria-label="Hubble home" className="shrink-0 rounded-xs outline-none focus-visible:ring-2 focus-visible:ring-ring">
               <Wordmark />
             </Link>
 
             <nav aria-label="Sections" className="absolute left-1/2 hidden -translate-x-1/2 items-center lg:flex">
               {NAV_LINKS.map((link) => (
-                <a key={link.href} href={`${linkBase}${link.href}`} className="m-small m-quiet-link px-[15px] py-[5.6px]">
+                <a key={link.href} href={link.href} className="m-small m-quiet-link px-[15px] py-[5.6px]">
                   {link.label}
                 </a>
               ))}
             </nav>
 
             <div className="ml-auto flex items-center gap-2">
-              <ActionButton action={install} className="m-small m-quiet-link hidden px-1.5 py-1 md:inline">
+              <ActionButton action={install} className="m-small m-quiet-link hidden px-1.5 py-1 sm:inline">
                 {install.label}
               </ActionButton>
               {desktop && (
-                <Link href={desktop.href} className={cn(buttonVariants({ variant: "outline", size: "nav" }), "hidden sm:inline-flex")}>
-                  {desktop.label}
+                <Link href={desktop.href} className={buttonVariants({ size: "nav" })}>
+                  Download
                 </Link>
               )}
-              <button type="button" onClick={onOpenApp} className={buttonVariants({ size: "nav" })}>
-                Open Hubble
-              </button>
               <button
                 type="button"
                 aria-label={menuOpen ? "Close menu" : "Open menu"}
@@ -157,70 +141,24 @@ export function SiteHeader({
         <ul className="flex flex-col">
           {NAV_LINKS.map((link, index) => (
             <li key={link.href} className="m-sheet-item" style={{ "--m-step": index } as CSSProperties}>
-              <a href={`${linkBase}${link.href}`} onClick={close} className="flex h-14 items-center text-[28px] tracking-[-0.025em] text-foreground">
+              <a href={link.href} onClick={close} className="flex h-14 items-center text-[28px] tracking-[-0.025em] text-foreground">
                 {link.label}
               </a>
             </li>
           ))}
         </ul>
         <div className="m-sheet-item mt-8 flex flex-col gap-2.5" style={{ "--m-step": NAV_LINKS.length } as CSSProperties}>
-          <button
-            type="button"
-            onClick={() => {
-              close()
-              onOpenApp()
-            }}
-            className={cn(buttonVariants({ size: "hero" }), "w-full")}
-          >
-            Open Hubble
-          </button>
-          <ActionButton action={install} className={cn(buttonVariants({ variant: "secondary", size: "hero" }), "w-full")}>
-            {install.label}
-          </ActionButton>
           {desktop && (
-            <Link href={desktop.href} onClick={close} className={cn(buttonVariants({ variant: "outline", size: "hero" }), "w-full")}>
+            <Link href={desktop.href} onClick={close} className={cn(buttonVariants({ size: "hero" }), "w-full")}>
               {desktop.label}
             </Link>
           )}
+          <ActionButton action={install} className={cn(buttonVariants({ variant: "secondary", size: "hero" }), "w-full")}>
+            {install.label}
+          </ActionButton>
         </div>
       </nav>
     </>
-  )
-}
-
-/**
- * The page's pair of pill actions: ink into the app, then a tonal pill — to
- * another page of the site (`secondary`, the desktop download) or, without
- * one, down the page.
- */
-export function HeroActions({
-  onOpenApp,
-  exploreHref,
-  secondary,
-  className,
-}: {
-  onOpenApp: () => void
-  exploreHref: string
-  secondary?: { label: string; href: string } | null
-  className?: string
-}) {
-  return (
-    <div className={cn("flex flex-wrap items-center gap-2.5", className)}>
-      <button type="button" onClick={onOpenApp} className={cn(buttonVariants({ size: "hero" }), "m-arrow-host")}>
-        Get started
-        <ArrowRight aria-hidden className="m-arrow" />
-      </button>
-      {secondary ? (
-        <Link href={secondary.href} className={buttonVariants({ variant: "secondary", size: "hero" })}>
-          {secondary.label}
-          <ArrowDown aria-hidden />
-        </Link>
-      ) : (
-        <a href={exploreHref} className={buttonVariants({ variant: "secondary", size: "hero" })}>
-          Explore Hubble
-        </a>
-      )}
-    </div>
   )
 }
 
@@ -274,7 +212,7 @@ export function FeatureSection({
           className={cn(
             "m-card m-bleed grid gap-6 p-3 sm:p-[18px]",
             "xl:min-h-[720px] xl:grid-cols-[minmax(0,383px)_minmax(0,1fr)] xl:gap-[40px]",
-            reverse && "xl:grid-cols-[minmax(0,1fr)_minmax(0,383px)]",
+            reverse && "xl:grid-cols-[minmax(0,1fr)_minmax(0,383px)]"
           )}
         >
           <div className={cn("flex flex-col justify-end px-2 pt-5 sm:px-[3px] xl:pt-0 xl:pb-[18px]", reverse && "xl:order-2")}>
@@ -310,63 +248,46 @@ export function Stage({ className, children }: { className?: string; children: R
 
 // ------------------------------------------------------------------ Footer
 
-export function SiteFooter({
-  onOpenApp,
-  install,
-  linkBase = "",
-}: {
-  onOpenApp: () => void
-  install: PrimaryAction
-  /** Where the section anchors live, for a page other than the landing page ("/welcome"). */
-  linkBase?: string
-}) {
+const FOOTER_COLUMNS: { title: string; links: { label: string; href: string }[] }[] = [
+  {
+    title: "Product",
+    links: [
+      { label: "How it works", href: "/#how-it-works" },
+      { label: "Desktop + Chrome", href: "/#desktop-and-chrome" },
+      { label: "Hubble for Chrome", href: CHROME_SECTION_HREF },
+      { label: "Changelog", href: "/#changelog" },
+    ],
+  },
+  {
+    title: "Resources",
+    links: [
+      { label: "Release notes", href: "/download#release" },
+      { label: "Move from Hubble on the web", href: "/move" },
+      { label: "Your account", href: "/account" },
+      { label: "Contact", href: `mailto:${CONTACT_EMAIL}` },
+    ],
+  },
+  {
+    title: "Legal",
+    links: [
+      { label: "Privacy Policy", href: "/privacy" },
+      { label: "Terms & Conditions", href: "/terms" },
+      { label: "Cookie Policy", href: "/cookies" },
+    ],
+  },
+]
+
+export function SiteFooter() {
   const desktopLink = useDesktopLink()
-  const columns: {
-    title: string
-    links: (PrimaryAction & { internal?: boolean })[]
-  }[] = [
-    {
-      title: "Product",
-      links: NAV_LINKS.map((link) => ({
-        label: link.label,
-        href: `${linkBase}${link.href}`,
-        internal: true,
-      })),
-    },
-    {
-      title: "Get Hubble",
-      links: [
-        { label: "Open Hubble", onClick: onOpenApp },
-        install,
-        ...(desktopLink
-          ? [
-              {
-                label: desktopLink.label,
-                href: desktopLink.href,
-                internal: true,
-              },
-            ]
-          : []),
-      ],
-    },
-    {
-      title: "Resources",
-      links: [{ label: "Changelog", href: `${linkBase}#changelog`, internal: true }],
-    },
-    {
-      title: "Legal",
-      links: [
-        { label: "Privacy Policy", href: "/privacy", internal: true },
-        { label: "Terms & Conditions", href: "/terms", internal: true },
-        { label: "Cookie Policy", href: "/cookies", internal: true },
-      ],
-    },
-  ]
+  const columns = FOOTER_COLUMNS.map((column) => ({
+    ...column,
+    links: [...(column.title === "Resources" && desktopLink ? [desktopLink] : []), ...column.links],
+  }))
   return (
     <footer className="m-page bg-card pt-[calc(var(--hb-section-y)*1.2)] pb-[30px]">
       <Container>
-        <div className="grid grid-cols-2 gap-y-10 sm:grid-cols-4 lg:grid-cols-6">
-          <div className="col-span-2 sm:col-span-4 lg:col-span-2">
+        <div className="grid grid-cols-2 gap-y-10 sm:grid-cols-3 lg:grid-cols-5">
+          <div className="col-span-2 sm:col-span-3 lg:col-span-2">
             <Wordmark />
           </div>
           {columns.map((column) => (
@@ -375,15 +296,9 @@ export function SiteFooter({
               <ul>
                 {column.links.map((link) => (
                   <li key={link.label}>
-                    {link.internal && link.href ? (
-                      <Link href={link.href} className="m-small m-quiet-link inline-block py-[4.67px]">
-                        {link.label}
-                      </Link>
-                    ) : (
-                      <ActionButton action={link} className="m-small m-quiet-link inline-block py-[4.67px] text-left">
-                        {link.label}
-                      </ActionButton>
-                    )}
+                    <Link href={link.href} className="m-small m-quiet-link inline-block py-[4.67px]">
+                      {link.label}
+                    </Link>
                   </li>
                 ))}
               </ul>
@@ -393,7 +308,7 @@ export function SiteFooter({
 
         <div className="mt-24 flex flex-wrap items-center justify-between gap-4 border-t border-subtle pt-6">
           <p className="m-small text-tertiary">© 2026 Hubble</p>
-          <p className="m-small text-tertiary">Your work stays on your device.</p>
+          <p className="m-small text-tertiary">Your work stays on your computer.</p>
         </div>
       </Container>
     </footer>

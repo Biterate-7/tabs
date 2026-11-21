@@ -49,6 +49,13 @@ reqwest = { version = "0.13", default-features = false, features = ["native-tls"
 # The PKCE challenge, S256. Already in the dependency tree.
 sha2 = "0.10"
 
+# Linux: the Secret Service (GNOME Keyring / KWallet) through D-Bus, with the
+# kernel keyring in front of it. Without a Linux backend keyring 3 silently
+# falls back to an in-memory store, and a signed-in Linux app would forget its
+# account on every restart.
+[target.'cfg(target_os = "linux")'.dependencies]
+keyring = { version = "3", features = ["linux-native-sync-persistent", "crypto-rust"] }
+
 [features]
 # Used by `tauri build --debug` / CI to keep devtools available.
 custom-protocol = ["tauri/custom-protocol"]

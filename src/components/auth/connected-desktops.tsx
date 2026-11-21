@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useEffect, useState } from "react"
+import { useCallback, useEffect, useState, type ReactNode } from "react"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
 import { formatRelativeTime } from "@/lib/time-format"
@@ -14,9 +14,9 @@ type State = { kind: "loading" } | { kind: "ready"; devices: Device[]; now: numb
  * Settings → Account on the web: the Hubble Desktop installs signed in to
  * this account, each with Disconnect — which deletes its device credential
  * (src/lib/auth/device.ts), so that app is signed out on its next request.
- * Renders nothing when there are none.
+ * Renders `empty` (by default nothing) when there are none.
  */
-export function ConnectedDesktops() {
+export function ConnectedDesktops({ empty = null }: { empty?: ReactNode } = {}) {
   const [state, setState] = useState<State>({ kind: "loading" })
   const [busy, setBusy] = useState<string | null>(null)
 
@@ -54,7 +54,9 @@ export function ConnectedDesktops() {
     }
   }
 
-  if (state.kind !== "ready" || state.devices.length === 0) return null
+  if (state.kind === "error") return <p className="text-body-sm text-destructive">Couldn&rsquo;t load your connected apps. Reload to try again.</p>
+  if (state.kind !== "ready") return null
+  if (state.devices.length === 0) return <>{empty}</>
   const { now } = state
   return (
     <>

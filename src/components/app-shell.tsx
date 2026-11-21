@@ -2,7 +2,6 @@
 
 import { useEffect, useMemo, useRef, useState } from "react"
 import { toast } from "sonner"
-import { FirstRunLanding } from "@/components/marketing/first-run-landing"
 import { getOnboardingState } from "@/lib/onboarding"
 import { WorkspaceView } from "@/components/workspace/workspace-view"
 import { HomeView } from "@/components/home/home-view"
@@ -94,7 +93,8 @@ import { useExtensionWorkspaceQuery } from "@/hooks/use-extension-workspace-quer
 import { useExtensionQuickAdd } from "@/hooks/use-extension-quick-add"
 import { useDesktopImport } from "@/hooks/use-desktop-import"
 import { useIsDesktop } from "@/hooks/use-is-desktop"
-import { desktopImport } from "@/lib/platform"
+import { desktopImport, desktopLink } from "@/lib/platform"
+import { ExtensionPairDialog } from "@/components/extension-link/extension-pair-dialog"
 import { outcomeFromIngestion, type DesktopConversationRequest, type DesktopImportRequest, type DesktopTabsRequest } from "@/lib/desktop/import-protocol"
 import { createSession } from "@/lib/sessions/model"
 import { describeWriteError } from "@/lib/sessions/messages"
@@ -1001,8 +1001,19 @@ export function AppShell() {
         recordLoopMilestone(how === "inserted" ? "memory_inserted" : "memory_copied", provider ? { provider } : {})
         recordProjectEvent({ workspaceId, kind: "memory_reused", count: items, ...(provider ? { provider } : {}) })
       },
+      // Quick add from a paired Hubble for Chrome: the same source pipeline as every other way in.
+      addSources: (workspaceId, inputs) => {
+        const outcomes = handleAddSources(workspaceId, inputs, "extension")
+        return {
+          added: outcomes.filter((outcome) => outcome.status === "added" || outcome.status === "adopted").length,
+          duplicates: outcomes.filter((outcome) => outcome.status === "duplicate").length,
+          failed: outcomes.filter((outcome) => outcome.status === "invalid").length,
+        }
+      },
     },
-    extensionCanIngest
+    extensionCanIngest,
+    // Hubble Desktop: a paired Hubble for Chrome asks through Rust (src-tauri/src/extension_link.rs).
+    desktopLink()
   )
   useExtensionWorkspaceQuery(currentWorkspace?.tabs ?? [], extensionProjects)
   // Quick add: the extension's tab-strip menu and shortcut add to the project on screen.
@@ -1010,9 +1021,9 @@ export function AppShell() {
   // Chrome → Hubble Desktop (handleDesktopImport below): tabs and conversations the extension sent straight to this app.
   const isDesktopShell = useIsDesktop()
   // Context intelligence (lib/intelligence): pulls detected activity from Hubble for Chrome and keeps the
-  // suggestions current. Web only — Hubble Desktop can't reach the extension.
+  // suggestions current. In Hubble Desktop it asks the paired extension (lib/browser/bridge.ts).
   const contextWorkspaces = useMemo(() => (store ? visibleSubjects(store, subjectsStarted) : []), [store, subjectsStarted])
-  useContextSync({ workspaces: contextWorkspaces, enabled: hydrated && store !== null && !isDesktopShell })
+  useContextSync({ workspaces: contextWorkspaces, enabled: hydrated && store !== null })
   const browserConnected = useBrowserConnected()
   const desktopImports = useDesktopImport(
     isDesktopShell ? desktopImport() : undefined,
@@ -1881,37 +1892,9 @@ export function AppShell() {
     />
   ) : null
 
-  // A first-time visitor gets Hubble's public landing page, full-bleed: no
-  // sidebar, no content-width clamp, none of the workspace chrome that means
-  // nothing to someone who has not dumped anything yet.
-  //
-  // The condition is deliberately conservative on both halves — the onboarding
-  // flag AND an entirely empty store — so a returning user who merely cleared a
-  // workspace is never sent back to marketing; they fall through to
-  // the project's own empty state below (Hubble 2.0), which still offers the
-  // paste-your-tabs field the old in-shell landing had.
-  //
-  // AppShell stays mounted around this, so an extension dump arriving mid-scroll
-  // still lands in the store and the next render swaps straight through to the
-  // real app without the landing page having to know it happened.
-  //
-  // Web only: Hubble Desktop has already been installed — its first screen is
-  // Home's "Welcome to Hubble", never a pitch for the app it already is.
-  if (!onboarded && !isDesktopShell && store.workspaces.every((w) => w.tabs.length === 0)) {
-    return (
-      <>
-        <FirstRunLanding
-          onEnterApp={() => setOnboarded(true)}
-          onOpenConnectors={() => {
-            setOnboarded(true)
-            openSettings("ai-integrations")
-          }}
-        />
-        {/* Tabs sent from Chrome on a first launch still get their choice. */}
-        {desktopImportDialog}
-      </>
-    )
-  }
+  // The app is Hubble Desktop's, and only Hubble Desktop's: the website is the
+  // launch site (src/app/page.web.tsx), so there is no in-shell landing page.
+  // A first launch opens Home's "Welcome to Hubble" (`firstRun` below).
 
   /*
     Every destination other than the workspace itself, resolved to the
@@ -1951,7 +1934,8 @@ export function AppShell() {
         onOpenSessions={openSessions}
         onUseInAi={(workspaceId) => openReuse({ workspaceId })}
         onShowInGraph={showInGraph}
-        {...(!isDesktopShell ? { context: { connected: browserConnected, onAccept: handleAcceptSuggestion, onOpenSettings: () => openSettings("context") } } : {})}
+        context={{ connected: browserConnected, onAccept: handleAcceptSuggestion, onOpenSettings: () => openSettings("context") }}
+        onConnectChrome={isDesktopShell ? () => openSettings("extension") : undefined}
       />
     )
   }
@@ -2207,6 +2191,8 @@ export function AppShell() {
         searchContent={paletteContent}
       />
       {desktopImportDialog}
+      {/* "Connect Hubble for Chrome?" — pairing (src-tauri/src/extension_link.rs). Desktop only. */}
+      <ExtensionPairDialog api={isDesktopShell ? desktopLink() : undefined} />
       <OpenTabsOrganize
         open={organizeOpenTabs}
         onOpenChange={setOrganizeOpenTabs}
@@ -2299,7 +2285,7 @@ export function AppShell() {
             canDeleteSubject={store.workspaces.length > 1}
           >
             {/* Pages Hubble noticed that may belong here: the same stored suggestion Home shows. */}
-            {!isDesktopShell && <ProjectContextStrip workspace={currentWorkspace} projects={subjects} onAccept={handleAcceptSuggestion} />}
+            <ProjectContextStrip workspace={currentWorkspace} projects={subjects} onAccept={handleAcceptSuggestion} />
             {/* The older "paste every open tab, organize later" dump, one disclosure away. */}
             {projectHomeFor(currentWorkspace, <TabInput onDump={handleDump} />)}
           </ProjectPage>
@@ -2340,7 +2326,7 @@ export function AppShell() {
             recentlyAddedIds={recentlyAddedIds}
             onOpenSidebar={() => setMobileSidebarOpen(true)}
             {...(organizeOfferFor?.workspaceId === currentWorkspace.id ? { organizeOffer: organizeOfferFor.token } : {})}
-            {...(!isDesktopShell ? { contextStrip: <ProjectContextStrip workspace={currentWorkspace} projects={subjects} onAccept={handleAcceptSuggestion} /> } : {})}
+            contextStrip={<ProjectContextStrip workspace={currentWorkspace} projects={subjects} onAccept={handleAcceptSuggestion} />}
             onDismissOrganizeOffer={() => setOrganizeOfferFor(null)}
             onCreateSection={handleCreateSection}
             onRenameSection={handleRenameSection}

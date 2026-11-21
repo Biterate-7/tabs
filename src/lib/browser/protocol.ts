@@ -45,10 +45,9 @@ export const MSG_SOURCE_STATUS_RESULT = "TABDUMP_SOURCE_STATUS_RESULT";
 export const DEFAULT_BROWSER_COMMAND_TIMEOUT_MS = 8000;
 
 /**
- * Every command's answer inside Hubble Desktop. The extension's content script
- * is only ever injected into the Hubble website, so in the desktop webview
- * nothing would answer — Chrome reaches the desktop app over its own loopback
- * bridge (src-tauri/src/import_bridge.rs) instead.
+ * The answer inside Hubble Desktop when no paired Hubble for Chrome took the
+ * command (none is paired, or Chrome didn't answer the wake): callers fall back
+ * as when the extension isn't installed. See sendBrowserCommand in ./bridge.ts.
  */
 export const DESKTOP_UNREACHABLE = "desktop-unreachable";
 
@@ -81,8 +80,6 @@ export type BrowserActionName =
   | "unpin_tab"
   | "move_tabs_to_window"
   | "create_browser_window"
-  /** Hubble Desktop's relay page handing Chrome's answer to the app (src/components/desktop-relay). Hubble for Chrome 0.9+. */
-  | "deliver_to_desktop"
   /**
    * Context detection (src/lib/intelligence/bridge.ts). The extension answers
    * these only for Hubble's own page. Hubble for Chrome 0.10+; an older one

@@ -62,10 +62,16 @@ function errorOf(error: string): ContextBridgeError {
   return "failed"
 }
 
+/** Asked on a timer or on a nudge, not by the person. */
+const BACKGROUND_ACTIONS: ReadonlySet<string> = new Set(["get_context_settings", "get_context_activity"])
+
 async function call<T>(action: Parameters<typeof sendBrowserCommand>[0], args: unknown, read: (value: unknown) => T | undefined, timeoutMs?: number): Promise<ContextAnswer<T>> {
-  // Every context command claims the account this page is signed in as (null signed out). The extension doesn't take
-  // the page's word for it: it asks Hubble's /api/auth/me with the browser's session cookie and refuses a mismatch.
-  const answer = await sendBrowserCommand<unknown, unknown>(action, { ...(args as Record<string, unknown>), account: getStorageNamespace() }, timeoutMs ? { timeoutMs } : undefined)
+  // Every context command claims the account Hubble is signed in as (null signed out). From a page, the extension doesn't
+  // take its word for it: it asks Hubble's /api/auth/me with the browser's session cookie and refuses a mismatch. From
+  // Hubble Desktop the claim arrives over the paired link, which only this app holds (extension/background/background.js).
+  // Reads Hubble makes by itself never wake Chrome in Hubble Desktop (BrowserCommandOptions.background); a choice the person makes may.
+  const options = { ...(timeoutMs ? { timeoutMs } : {}), ...(BACKGROUND_ACTIONS.has(action) ? { background: true } : {}) }
+  const answer = await sendBrowserCommand<unknown, unknown>(action, { ...(args as Record<string, unknown>), account: getStorageNamespace() }, options)
   if (!answer.ok) return { ok: false, error: errorOf(answer.error), detail: answer.error.slice(0, 200) }
   const value = read(answer.result)
   return value === undefined ? { ok: false, error: "failed", detail: "malformed answer" } : { ok: true, value }

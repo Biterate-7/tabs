@@ -26,8 +26,8 @@ settings), not from a wish list.
 |---|---|---|
 | No server in the app (static export) | Account APIs can't be same-origin | Rust makes them, with a device token (`account_request`) |
 | No session cookie, and Google won't accept the app's origin | No sign-in | Pairing through the browser with PKCE (`/desktop/connect`, `src/lib/auth/device.ts`) |
-| The extension talks to the app, never the reverse | The app can't read tabs or history | The relay: a Hubble page asks in the browser, the extension answers (`/desktop/relay`) |
-| The app can't open a Chrome window | Sessions can't start in a new window | Each tab goes to the default browser (`open_external`) |
+| The extension talks to the app, never the reverse | The app can't read tabs or history | **2026-11-20:** commands over the paired link — Hubble queues, Hubble for Chrome collects and answers (`extension_link.rs`, "Commands from Hubble"). Replaced the website relay (`/desktop/relay`, removed) |
+| The app can't open a Chrome window | Sessions can't start in a new window | Paired: `open_session` over the link opens a new Chrome window. Not paired: each tab goes to the default browser (`open_external`) |
 
 ## Matrix
 
@@ -44,16 +44,18 @@ settings), not from a wish list.
 | Home, search (Ctrl+K), galaxy graph | ✓ | ✓ | CDP (round 1): WebGL canvases, search hit, screenshots | — |
 | Projects, notes + LaTeX, PDF reader | ✓ | ✓ | CDP: project created; 2 `.katex` + 1 `.katex-display`; pdf.js page canvas | — |
 | Persistence across restart | ✓ | ✓ | CDP: projects, session, theme after kill + relaunch | — |
-| **Save current session** | Through the page | Relay: approve in the browser | E2E: relay page → Send → "2 tabs will be saved" (Hubble's own tab left out) → saved with `example.com, example.org` | Needs Hubble for Chrome 0.9.0 |
+| **Save current session** | Through the page | Over the paired link (`readChromeTabs`) | Unit: `desktop-runtime.test.ts`, `desktop-commands.test.js` (wake → collect → answer), Rust route tests. The 2026-10-18 E2E used the relay and has not been re-run on the link | Needs Hubble for Chrome 0.11.0, paired |
 | Save tabs Chrome sends as a session | — | Import dialog → Save as a session | E2E (round 1): real bridge → session listed, bridge answered `done` | — |
-| Start a session | New Chrome window | Default browser, tab by tab | E2E (round 1): loopback server received both tabs | No window grouping |
-| **Import from history** | Through the page | Relay: approve the range in the browser | E2E: scan → relay page → Send → scan completed ("Nothing worth keeping" for a fresh profile) | Needs 0.9.0 |
-| **Organize open tabs**, Add → Browser tabs | Through the page | Relay (`readChromeTabs`) | Unit (`open-tabs-organize.test.tsx`: waits, organizes what was sent, says when declined); same reader as the E2E session save | — |
-| Relay security | — | Fragment-only secret, extension Origin, single answer, 5-minute expiry | Unit: 3 Rust relay tests, extension validator tests, page tests incl. StrictMode; E2E: secret cleared from the address bar | — |
+| Start a session | New Chrome window | Paired: new Chrome window (`open_session`). Not paired: default browser, tab by tab | E2E (round 1, default-browser path): loopback server received both tabs. Link path: unit only | — |
+| **Import from history** | Through the page | Over the paired link (`get_history`) | Unit (`desktop-runtime.test.ts`, `desktop-commands.test.js`). Not re-run E2E on the link | Needs 0.11.0, paired |
+| **Organize open tabs**, Add → Browser tabs | Through the page | Over the paired link (`readChromeTabs`) | Unit (`open-tabs-organize.test.tsx`) | — |
+| Link command security | — | Token + extension origin on collect and answer; allowlist of 13 actions re-validated by the extension; per-link answering; capped args, queue and TTL; wake carries nothing | Unit: 6 Rust tests (`extension_link.rs`, `import_bridge.rs`), `link-protocol.test.ts` parity, `desktop-link.test.js`, `desktop-commands.test.js` | Live CDP/real-Chrome run not done for the link |
 | Theme / appearance | ✓ | ✓ | CDP: persists across restart | — |
 | Export / import projects | Download / file input | Native Save dialog / file input | Unit; 2026-10-18 audit | — |
 
 ## Found and fixed during verification
+
+(2026-10-18, on the relay that has since been replaced by commands over the paired link.)
 
 - The relay page read its fragment in an effect that React StrictMode runs
   twice; the first run cleared the secret and the second saw "This link isn't

@@ -10,6 +10,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { CAPTURE_JOBS_KEY, MSG_CAPTURE_CONVERSATION, MSG_CAPTURE_RETRY, MSG_CAPTURE_STATUS, MSG_PAGE_REQUEST, MSG_PROJECT_FOCUS, PROJECTS_SNAPSHOT_KEY, TABDUMP_ORIGIN, TARGET_PROJECT_KEY } from "../src/config.js";
 import { CAPTURE_LEASE_MS } from "../src/capture-queue.js";
+import { DESKTOP_WATCH_ALARM, MSG_DESKTOP_STATUS } from "../src/config.js";
+import { pairedDesktopFetch, pairedStorage } from "../test-support/paired-desktop.js";
 
 const EXTENSION_ID = "hubble-extension";
 const POPUP = { id: EXTENSION_ID };
@@ -28,6 +30,8 @@ let pageRequests;
 // What the Hubble page answers a capture with; replaced per test.
 let pageAnswer;
 let hubbleTabs;
+// Whether Hubble Desktop is running right now (the paired bridge answers only then).
+let desktopRunning;
 const realFetch = globalThis.fetch;
 
 function hubbleTab(over = {}) {
@@ -36,22 +40,25 @@ function hubbleTab(over = {}) {
 
 beforeEach(() => {
   listeners = [];
-  local = {};
+  local = pairedStorage();
   storageListeners = [];
+  desktopRunning = true;
   pageRequests = [];
   hubbleTabs = [hubbleTab()];
   pageAnswer = async () => ({ ok: true, result: { outcome: "added", title: "WW1", turns: 2, truncated: false, project: "History IA" } });
-  // Hubble Desktop isn't running: Save goes to Hubble on the web.
-  globalThis.fetch = vi.fn(async () => {
-    throw new TypeError("Failed to fetch");
-  });
+  // A paired Hubble Desktop: what the Hubble page answered, Hubble Desktop's window answers now (the page mock below).
+  globalThis.fetch = pairedDesktopFetch({ running: () => desktopRunning });
   const clone = (value) => (value === undefined ? undefined : JSON.parse(JSON.stringify(value)));
   globalThis.chrome = {
     runtime: { id: EXTENSION_ID, onMessage: { addListener: vi.fn((fn) => listeners.push(fn)) } },
     tabs: {
-      query: vi.fn(async (query) => (query.url ? hubbleTabs : [])),
+      query: vi.fn(async (query) => (query.url ? hubbleTabs : query.active ? [{ id: 7, windowId: 10, url: CHAT_URL, title: "WW1 - ChatGPT", status: "complete", active: true }] : [])),
       create: vi.fn(async () => hubbleTab({ id: 43 })),
-      update: vi.fn(),
+      // Opening hubble:// starts Hubble Desktop.
+      update: vi.fn(async (_id, props) => {
+        if (String(props?.url ?? "").startsWith("hubble://")) desktopRunning = true;
+        return { id: _id };
+      }),
       reload: vi.fn(async (id) => {
         hubbleTabs = hubbleTabs.map((tab) => (tab.id === id ? { ...tab, discarded: false } : tab));
       }),
@@ -69,7 +76,7 @@ beforeEach(() => {
     },
     windows: { update: vi.fn() },
     commands: { getAll: vi.fn(async () => [{ name: "add-to-project", shortcut: "Alt+Shift+H" }]), onCommand: { addListener: vi.fn() } },
-    alarms: { create: vi.fn(async () => {}), onAlarm: { addListener: vi.fn() } },
+    alarms: { create: vi.fn(async () => {}), clear: vi.fn(async () => true), onAlarm: { addListener: vi.fn() } },
     storage: {
       session: { set: vi.fn(async () => {}), get: vi.fn(async () => ({})) },
       local: {
@@ -191,7 +198,7 @@ describe("projects reach the extension as Hubble changes them", () => {
 describe("Save to Hubble from ChatGPT, durably", () => {
   it("is reported saved only once Hubble answers that it is on disk", async () => {
     const answer = await ask({ type: MSG_CAPTURE_CONVERSATION, payload: { tabId: 7, workspaceId: HISTORY.id, expectedKey: CHAT_KEY } });
-    expect(answer).toMatchObject({ ok: true, result: { outcome: "added", project: "History IA" }, job: { status: "saved" }, hubbleTabId: 42 });
+    expect(answer).toMatchObject({ ok: true, result: { outcome: "added", project: "History IA" }, job: { status: "saved" } });
     expect(pageRequests).toEqual([expect.objectContaining({ kind: "capture", args: { workspaceId: HISTORY.id, captureId: answer.job.id, capture: { url: CHAT_URL, title: "WW1", turns: TURNS } } })]);
     expect(jobs()).toEqual([expect.objectContaining({ key: CHAT_KEY, status: "saved" })]);
   });
@@ -205,9 +212,9 @@ describe("Save to Hubble from ChatGPT, durably", () => {
     expect(jobs()[0]).toMatchObject({ status: "queued", capture: { turns: TURNS } });
     expect(chrome.alarms.create).toHaveBeenCalled();
 
-    // Hubble is back and says so (any report): the waiting save is delivered, under the same capture id.
+    // Hubble Desktop answers again (the popup looks for it when opened): the waiting save is delivered, under the same capture id.
     pageAnswer = async () => ({ ok: true, result: { outcome: "added", title: "WW1", turns: 2, truncated: false, project: "History IA" } });
-    await report(100, [HISTORY]);
+    await ask({ type: MSG_DESKTOP_STATUS });
     await vi.waitFor(() => expect(jobs()[0]).toMatchObject({ status: "saved" }));
     expect(pageRequests).toHaveLength(2);
     expect(pageRequests[1].args.captureId).toBe(pageRequests[0].args.captureId);
@@ -248,11 +255,29 @@ describe("Save to Hubble from ChatGPT, durably", () => {
     expect(pageRequests.map((request) => request.args.workspaceId)).toEqual([HISTORY.id]);
   });
 
-  it("reloads a Hubble tab Chrome discarded rather than failing against it", async () => {
-    hubbleTabs = [hubbleTab({ discarded: true })];
+  it("starts Hubble Desktop for a save the person just asked for, then saves into it", async () => {
+    desktopRunning = false;
     const answer = await ask({ type: MSG_CAPTURE_CONVERSATION, payload: { tabId: 7, workspaceId: HISTORY.id } });
-    expect(chrome.tabs.reload).toHaveBeenCalledWith(42);
-    expect(answer).toMatchObject({ ok: true });
+    expect(chrome.tabs.update).toHaveBeenCalledWith(expect.any(Number), { url: "hubble://import" });
+    expect(answer).toMatchObject({ ok: true, job: { status: "saved" } });
+  });
+
+  it("keeps a save while Hubble Desktop can't be started, and delivers it once Hubble is running", async () => {
+    desktopRunning = false;
+    // Chrome refused to open hubble:// (not installed, or the prompt was declined).
+    chrome.tabs.update.mockRejectedValue(new Error("blocked"));
+    const answer = await ask({ type: MSG_CAPTURE_CONVERSATION, payload: { tabId: 7, workspaceId: HISTORY.id } });
+    expect(answer).toMatchObject({ ok: false, queued: true, job: { status: "queued" } });
+    expect(jobs()[0]).toMatchObject({ status: "queued", capture: { turns: TURNS } });
+    expect(pageRequests).toEqual([]);
+    // Watched for: one loopback look a minute while anything waits.
+    expect(chrome.alarms.create).toHaveBeenCalledWith(DESKTOP_WATCH_ALARM, { periodInMinutes: 1 });
+
+    desktopRunning = true;
+    const onAlarm = chrome.alarms.onAlarm.addListener.mock.calls.map(([fn]) => fn);
+    for (const fn of onAlarm) fn({ name: DESKTOP_WATCH_ALARM });
+    await vi.waitFor(() => expect(jobs()[0]).toMatchObject({ status: "saved" }));
+    expect(pageRequests).toEqual([expect.objectContaining({ kind: "capture", args: expect.objectContaining({ workspaceId: HISTORY.id }) })]);
   });
 
   it("only the popup may ask about or retry a save", async () => {

@@ -11,7 +11,6 @@ import {
   DesktopError,
   buildDesktopConversation,
   buildDesktopPayload,
-  deliverRelayAnswer,
   describeDesktopPhase,
   describeDesktopResult,
   describeDesktopSave,
@@ -264,10 +263,10 @@ describe("what the person is told", () => {
     expect(describeDesktopResult({ status: "done", project: "Research", added: 200, duplicates: 0, failed: 0, overLimit: 15 })).toMatchObject({ title: "200 of 215 added to Research" });
   });
 
-  it("offers Hubble Web when Hubble Desktop can't be reached, and never fails silently", () => {
-    expect(describeDesktopResult({ reason: "desktop-not-found" })).toEqual({ tone: "error", title: "Hubble Desktop wasn't found", detail: "Open Hubble Web instead?", actions: ["web", "retry"] });
-    expect(describeDesktopResult({ reason: "desktop-not-responding" })).toMatchObject({ title: "Hubble Desktop isn't responding", actions: ["retry", "web"] });
-    expect(describeDesktopResult({ reason: "something-new" })).toMatchObject({ tone: "error", actions: ["retry", "web"] });
+  it("offers Retry when Hubble Desktop can't be reached, and never fails silently", () => {
+    expect(describeDesktopResult({ reason: "desktop-not-found" })).toEqual({ tone: "error", title: "Hubble Desktop wasn't found", detail: "Install Hubble Desktop, open it, then try again.", actions: ["web", "retry"] });
+    expect(describeDesktopResult({ reason: "desktop-not-responding" })).toMatchObject({ title: "Hubble Desktop isn't responding", actions: ["retry"] });
+    expect(describeDesktopResult({ reason: "something-new" })).toMatchObject({ tone: "error", actions: ["retry"] });
     expect(describeDesktopResult({ reason: "invalid-payload" })).toEqual({ tone: "error", title: "Couldn't import these tabs", detail: "Please try again.", actions: ["retry"] });
   });
 
@@ -390,28 +389,3 @@ describe("a conversation for Hubble Desktop", () => {
   });
 });
 
-describe("deliverRelayAnswer", () => {
-  const args = { port: 41517, id: "a".repeat(32), secret: "b".repeat(64), action: "browser_tabs" };
-
-  it("posts the answer to the relay with its secret", async () => {
-    const calls = [];
-    const fetch = async (url, init) => {
-      calls.push({ url, init });
-      return { ok: true, status: 200, json: async () => ({ ok: true }) };
-    };
-    expect(await deliverRelayAnswer({ ...args, ok: true, result: { tabs: [] }, fetch })).toEqual({ ok: true });
-    expect(calls[0].url).toBe(`http://127.0.0.1:41517/v1/relay/${"a".repeat(32)}`);
-    expect(calls[0].init.headers.Authorization).toBe(`Bearer ${"b".repeat(64)}`);
-    expect(JSON.parse(calls[0].init.body)).toEqual({ action: "browser_tabs", ok: true, result: { tabs: [] } });
-  });
-
-  it("says why an answer didn't land", async () => {
-    const answer = (status, reason) => async () => ({ ok: false, status, json: async () => ({ ok: false, reason }) });
-    expect((await deliverRelayAnswer({ ...args, ok: false, error: "declined", fetch: answer(404, "unknown-session") })).error).toMatch(/stopped waiting/);
-    expect((await deliverRelayAnswer({ ...args, ok: false, error: "declined", fetch: answer(409, "already-submitted") })).error).toMatch(/already has/);
-    const offline = async () => {
-      throw new TypeError("Failed to fetch");
-    };
-    expect(await deliverRelayAnswer({ ...args, ok: true, result: {}, fetch: offline })).toEqual({ ok: false, error: "Hubble Desktop isn't open." });
-  });
-});

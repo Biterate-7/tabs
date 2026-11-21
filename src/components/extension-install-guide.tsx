@@ -23,7 +23,7 @@ export const EXTENSION_INSTALL_STEPS = [
     folder — the one containing <code className="rounded bg-muted px-1 py-0.5 text-[0.85em]">manifest.json</code>.
   </>,
   "Pin Hubble to your Chrome toolbar.",
-  "Return to Hubble and click the Hubble extension.",
+  "Open Hubble for Chrome and choose Connect to Hubble Desktop, then approve it in the app.",
 ]
 
 export function ExtensionInstallGuide({

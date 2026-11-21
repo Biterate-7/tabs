@@ -67,8 +67,12 @@ export const DESKTOP_BUILDS: Readonly<Record<DesktopOs, DesktopBuild>> = {
     sha256: "660326fd1312727ba4edef5cc17a2755ae437e31674ac12d4359ac67174dc9d3",
     bytes: 30_260_142,
   },
-  macos: { status: "coming_soon" },
-  linux: { status: "unsupported" },
+  // Built by the release workflow (.github/workflows/desktop-release.yml) from
+  // 0.2.0 on, but nothing is published here until a person publishes a release
+  // that has them — and then the website follows the release itself
+  // (artifacts.ts), not this table.
+  macos: { status: "unpublished" },
+  linux: { status: "unpublished" },
 };
 
 export const DESKTOP_OS_LABEL: Record<DesktopOs, string> = {

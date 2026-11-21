@@ -188,40 +188,6 @@ export function buildDesktopConversation(capture, requestId = newRequestId()) {
   return { payload, turns: turns.length, truncated };
 }
 
-/**
- * Hands Hubble Desktop Chrome's answer to a question it asked (its relay):
- * `POST /v1/relay/:id` with the relay's one-time secret. The caller is the
- * `deliver_to_desktop` browser command, which validated every field.
- * Resolves `{ ok: true }`, or `{ ok: false, error }` saying why it didn't land.
- */
-export async function deliverRelayAnswer({ port, id, secret, action, ok, result, error, fetch: fetchFn = globalThis.fetch }) {
-  try {
-    const sent = await request(
-      fetchFn,
-      bridgeUrl(port, `/v1/relay/${encodeURIComponent(id)}`),
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${secret}` },
-        body: JSON.stringify(ok ? { action, ok: true, result } : { action, ok: false, error }),
-      },
-      15000
-    );
-    if (sent.ok) return { ok: true };
-    const reason = sent.body?.reason;
-    return {
-      ok: false,
-      error:
-        reason === "unknown-session"
-          ? "Hubble Desktop stopped waiting for this. Ask again from Hubble Desktop."
-          : reason === "already-submitted"
-            ? "Hubble Desktop already has this answer."
-            : `Hubble Desktop refused the answer (${sent.status}).`,
-    };
-  } catch {
-    return { ok: false, error: "Hubble Desktop isn't open." };
-  }
-}
-
 function bridgeUrl(port, path) {
   return `http://127.0.0.1:${port}${path}`;
 }
@@ -419,7 +385,7 @@ export function describeDesktopResult(outcome) {
         detail: outcome.blankOnly ? "A blank tab has nothing to add. Open a page in it first." : notSent > 0 ? "Chrome's own pages can't be added. Web pages, PDFs and videos can." : "There are no tabs to add.",
       };
     case "desktop-not-found":
-      return { tone: "error", title: "Hubble Desktop wasn't found", detail: "Open Hubble Web instead?", actions: ["web", "retry"] };
+      return { tone: "error", title: "Hubble Desktop wasn't found", detail: "Install Hubble Desktop, open it, then try again.", actions: ["web", "retry"] };
     case "desktop-busy":
       return { tone: "error", title: "Hubble Desktop is busy", detail: "Finish adding the last tabs in Hubble Desktop, then try again.", actions: ["retry"] };
     case "invalid-payload":
@@ -429,7 +395,7 @@ export function describeDesktopResult(outcome) {
     case "desktop-not-responding":
     case "desktop-session-lost":
     default:
-      return { tone: "error", title: "Hubble Desktop isn't responding", detail: "Try again, or use Hubble Web instead.", actions: ["retry", "web"] };
+      return { tone: "error", title: "Hubble Desktop isn't responding", detail: "Try again in a moment.", actions: ["retry"] };
   }
 }
 
@@ -472,7 +438,7 @@ export function describeDesktopSave(outcome) {
     case "desktop-not-responding":
     case "desktop-session-lost":
     default:
-      return { tone: "error", title: "Hubble Desktop isn't responding", detail: "Try again, or close Hubble Desktop to save to Hubble on the web." };
+      return { tone: "error", title: "Hubble Desktop isn't responding", detail: "Try again in a moment." };
   }
 }
 

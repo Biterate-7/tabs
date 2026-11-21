@@ -51,9 +51,14 @@
               <p id="memory-status" class="popup__muted popup__detail" role="status" hidden></p>
             </details>
           </section>
-          <!-- Hubble Desktop on this computer: straight in, you choose the project there. Shown once it has been seen. -->
+          <!-- Hubble Desktop on this computer — where everything goes. Connecting (pairing) once lets this extension list
+               your projects and save straight into one; until then Hubble asks in its own window. -->
           <section id="desktop-section" class="popup__desktop" aria-labelledby="desktop-heading" hidden>
             <h2 id="desktop-heading" class="popup__subheading">Hubble Desktop <span id="desktop-status" class="popup__muted"></span></h2>
+            <div id="desktop-connect-row" class="popup__row" hidden>
+              <button id="desktop-connect-button" class="popup__button">Connect to Hubble Desktop</button>
+            </div>
+            <p id="desktop-pair-status" class="popup__muted popup__detail" role="status" hidden></p>
             <div class="popup__row">
               <button id="desktop-current-button" class="popup__button">Add this tab</button>
               <button id="desktop-selected-button" class="popup__button popup__button--secondary" hidden>Add selected tabs</button>
@@ -75,7 +80,7 @@
               </select>
             </label>
           </section>
-          <p id="project-unavailable" class="popup__muted popup__detail" hidden>Open Hubble to add this tab to a project.</p>
+          <p id="project-unavailable" class="popup__muted popup__detail" hidden>Connect to Hubble Desktop to add this tab to a project.</p>
 
           <!-- Sessions: keep this window's tabs as they are, to reopen together later from Hubble. -->
           <section id="session-section" class="popup__session" aria-labelledby="session-heading">
@@ -124,7 +129,7 @@
           <p class="popup__muted popup__detail" id="error-detail" hidden></p>
           <div class="popup__row">
             <button id="retry-button" class="popup__button popup__button--secondary">Try again</button>
-            <button id="web-button" class="popup__button popup__button--secondary" hidden>Open Hubble Web</button>
+            <button id="web-button" class="popup__button popup__button--secondary" hidden>Get Hubble Desktop</button>
           </div>
         </div>
       </div>

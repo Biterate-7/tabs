@@ -42,6 +42,20 @@ export async function ownerForAccount(account, subtle = globalThis.crypto?.subtl
 }
 
 /**
+ * The owner for an account Hubble Desktop named over the paired link. No server
+ * check: the link's token is held only by the paired app, which knows its own
+ * account (the device sign-in in its Rust half). Kept apart from web owners
+ * ("desktop:" prefix), so what was kept for a browser session is never handed
+ * to the app or the other way round, and a save for it is delivered only while
+ * this extension is still paired (background.js).
+ */
+export async function ownerForDesktopAccount(account, subtle = globalThis.crypto?.subtle) {
+  const claim = readAccountClaim(account);
+  if (claim === undefined) throw new Error("identity-malformed");
+  return `desktop:${await sha256Hex(`hubble-context:desktop:${claim ?? "signed-out"}`, subtle)}`;
+}
+
+/**
  * @param deps.fetch         globalThis.fetch
  * @param deps.hubbleOrigin  Hubble's origin; /api/auth/me is asked there, with credentials
  * @param deps.now           () => epoch ms

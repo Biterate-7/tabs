@@ -11,6 +11,8 @@
 
 mod commands;
 mod account;
+mod durable_store;
+mod extension_link;
 mod import_bridge;
 
 use std::sync::{Arc, Mutex};
@@ -71,14 +73,21 @@ pub fn run() {
             commands::app_info,
             import_bridge::desktop_import_take,
             import_bridge::desktop_import_finish,
-            import_bridge::desktop_relay_begin,
-            import_bridge::desktop_relay_take,
-            import_bridge::desktop_relay_cancel,
+            import_bridge::desktop_pair_pending,
+            import_bridge::desktop_pair_answer,
+            import_bridge::desktop_link_list,
+            import_bridge::desktop_link_revoke,
+            import_bridge::desktop_link_take,
+            import_bridge::desktop_link_answer,
+            import_bridge::desktop_link_paired,
+            import_bridge::desktop_link_command,
             account::account_status,
             account::account_sign_in_begin,
             account::account_sign_in_complete,
             account::account_sign_out,
-            account::account_request
+            account::account_request,
+            durable_store::durable_store_read,
+            durable_store::durable_store_write
         ])
         .setup(|app| {
             let handle = app.handle().clone();
@@ -87,8 +96,14 @@ pub fn run() {
             // does, so a batch the extension sends while Hubble is still
             // starting waits here until the webview takes it.
             let bridge = Arc::new(Mutex::new(import_bridge::Bridge::default()));
+            // Paired Hubble for Chrome installs (hashes only), kept with the app's data.
+            if let Ok(dir) = app.path().app_data_dir() {
+                bridge.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).link = extension_link::Link::load(dir.join("extension-links.json"));
+            }
             app.manage(import_bridge::ImportBridgeState(Arc::clone(&bridge)));
             app.manage(account::AccountState::default());
+            // localStorage's durable copy (durable_store.rs), restored by the webview before the app reads anything.
+            app.manage(durable_store::DurableStoreState(app.path().app_data_dir().ok().map(|dir| dir.join("durable-store"))));
             import_bridge::start(app.handle().clone(), bridge);
 
             // The installer registers `hubble://`; a development build
@@ -187,7 +202,7 @@ mod tests {
 
     #[test]
     fn webpages_go_to_the_browser_and_nothing_else_does() {
-        assert!(belongs_in_browser(&url("https://hubble-hq.vercel.app/")));
+        assert!(belongs_in_browser(&url("https://hubblehq.vercel.app/")));
         assert!(belongs_in_browser(&url("http://example.com/page")));
         for raw in ["mailto:someone@example.com", "file:///C:/Windows/win.ini", "ms-settings:privacy", "javascript:alert(1)"] {
             assert!(!belongs_in_browser(&url(raw)), "{raw}");

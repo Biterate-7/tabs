@@ -33,9 +33,10 @@
 //!   token issued with the session, compared in constant time. A session that
 //!   is never used expires; a request nobody answers expires; a result nobody
 //!   collects expires. Nothing outlives the app: all of it is in memory.
-//! * **Five routes, one job.** There is no route that touches a file, runs a
-//!   command or reaches a Tauri command. (The fifth, `/v1/relay/:id`, takes
-//!   Chrome's answer to a question this app asked; see "The relay".) The bridge can only queue something
+//! * **Few routes, one job.** There is no route that touches a file, runs a
+//!   command or reaches a Tauri command. (`/v1/pair` and `/v1/link/*` are the
+//!   paired link, extension_link.rs; `GET /v1/wake` only wakes the extension and
+//!   answers "Hubble is here".) The import routes can only queue something
 //!   for the person to accept or decline in Hubble's own window: a batch of
 //!   web addresses (`"kind": "tabs"`, the default) or one AI conversation the
 //!   extension read from ChatGPT, Claude, Gemini or Perplexity
@@ -68,6 +69,8 @@ use std::time::{Duration, Instant};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tauri::{AppHandle, Emitter, Manager};
+
+use crate::extension_link::{self, Link, LinkRefusal};
 
 
 /// The wire protocol version. Mirrors `DESKTOP_PROTOCOL_VERSION` in
@@ -459,112 +462,40 @@ pub struct Bridge {
     /// Whether the webview has asked for requests at least once — reported by
     /// `/v1/hello` so the extension can say "Starting Hubble Desktop…".
     webview_ready: bool,
-    /// Questions this app asked Chrome (see "The relay" below), by id.
-    relays: HashMap<String, Relay>,
-    /// The port the listener bound, once it has — the relay page needs it.
+    /// When Hubble last opened the wake address (see `may_wake`).
+    last_wake: Option<Instant>,
+    /// The port the listener bound, once it has — the wake address needs it.
     port: Option<u16>,
+    /// Paired extensions and their requests (extension_link.rs).
+    pub link: Link,
 }
 
-/* ------------------------------------------------------------------ *
- * The relay: Hubble Desktop asking Chrome
- * ------------------------------------------------------------------ *
- *
- * Everything above carries what the extension *chose* to send. The relay is
- * the one case where the app asks: "which tabs are open?" (to save a session,
- * add tabs, organize them) or "what did I visit between these dates?"
- * (History Dump). The app can't call Chrome, and the extension can't be
- * called, so the question travels through the person's browser:
- *
- *   app ── desktop_relay_begin ──▶ opens {hubble}/desktop/relay#id=…&secret=…&port=…&action=…
- *   relay page: shows what is asked; the person presses Send (or Don't send)
- *   relay page ── existing extension commands ──▶ Chrome answers
- *   relay page ── extension "deliver_to_desktop" ──▶ POST /v1/relay/:id  Bearer secret
- *   app ◀── "hubble-relay:delivered" ── desktop_relay_take
- *
- * The id and secret live in the URL fragment, which no server ever sees, and
- * the delivery must come from the extension (the same Origin rule as every
- * other POST) with the secret, compared in constant time. Each relay answers
- * once, for one named action, and expires. The answer is data the person
- * approved sending, about their own browser; it is validated again by the
- * webview before anything is shown, and nothing is saved without them.
- */
-
-/// The questions the app may ask Chrome.
-pub const RELAY_ACTIONS: [&str; 2] = ["browser_tabs", "history"];
-pub const RELAY_TTL: Duration = Duration::from_secs(5 * 60);
-const MAX_RELAYS: usize = 4;
-/// 5,000 history entries with long addresses and titles fit comfortably.
-pub const MAX_RELAY_BODY_BYTES: usize = 8 * 1024 * 1024;
-pub const RELAY_DELIVERED_EVENT: &str = "hubble-relay:delivered";
-
-struct Relay {
-    action: &'static str,
-    secret: String,
-    deadline: Instant,
-    answer: Option<Value>,
-}
+/// The fewest seconds between two wakes: a burst of commands opens Chrome once.
+pub const WAKE_INTERVAL: Duration = Duration::from_secs(15);
+/// How long a command waits for an extension that may already be awake before Chrome is woken.
+pub const WAKE_GRACE: Duration = Duration::from_millis(1200);
+/// While a command waits, how often Hubble looks again at whether the extension went quiet and needs waking.
+pub const WAKE_RECHECK: Duration = Duration::from_millis(500);
 
 impl Bridge {
     pub fn set_port(&mut self, port: u16) {
         self.port = Some(port);
     }
 
-    pub fn open_relay(&mut self, action: &str, now: Instant) -> Result<(String, String, u16), String> {
-        let action = RELAY_ACTIONS.iter().copied().find(|known| *known == action).ok_or("Hubble Desktop doesn't ask Chrome that.")?;
-        let port = self.port.ok_or("Hubble Desktop's connection for Hubble for Chrome isn't running.")?;
-        self.relays.retain(|_, relay| now < relay.deadline || relay.answer.is_some());
-        if self.relays.len() >= MAX_RELAYS {
-            return Err("Hubble Desktop is already waiting on Chrome. Finish or cancel that first.".into());
-        }
-        let (id, secret) = (random_hex(16), random_hex(32));
-        self.relays.insert(id.clone(), Relay { action, secret: secret.clone(), deadline: now + RELAY_TTL, answer: None });
-        Ok((id, secret, port))
-    }
-
-    /// The extension delivering Chrome's answer (or the person's "Don't send").
-    pub fn deliver_relay(&mut self, id: &str, token: Option<&str>, body: &[u8], now: Instant) -> Result<(), Refusal> {
-        let relay = self.relays.get_mut(id).ok_or(Refusal::NotFound)?;
-        if now >= relay.deadline {
-            self.relays.remove(id);
-            return Err(Refusal::NotFound);
-        }
-        if !token.is_some_and(|t| same_token(t, &relay.secret)) {
-            return Err(Refusal::Unauthorized);
-        }
-        if relay.answer.is_some() {
-            return Err(Refusal::Conflict);
-        }
-        if body.len() > MAX_RELAY_BODY_BYTES {
-            return Err(Refusal::TooLarge);
-        }
-        let value: Value = serde_json::from_slice(body).map_err(|_| Refusal::BadRequest)?;
-        let object = value.as_object().ok_or(Refusal::BadRequest)?;
-        if object.get("action").and_then(Value::as_str) != Some(relay.action) {
-            return Err(Refusal::BadRequest);
-        }
-        let answer = match object.get("ok") {
-            Some(Value::Bool(true)) => json!({ "ok": true, "result": object.get("result").filter(|r| r.is_object()).ok_or(Refusal::BadRequest)? }),
-            Some(Value::Bool(false)) => {
-                let error = object.get("error").and_then(Value::as_str).unwrap_or("Chrome didn't answer.");
-                json!({ "ok": false, "error": error.chars().take(300).collect::<String>() })
-            }
-            _ => return Err(Refusal::BadRequest),
-        };
-        relay.answer = Some(answer);
-        Ok(())
-    }
-
-    /// The answer, once; `None` while still waiting (or for an unknown id).
-    pub fn take_relay(&mut self, id: &str) -> Option<Value> {
-        let answered = self.relays.get(id).is_some_and(|relay| relay.answer.is_some());
-        if !answered {
+    /// The address that wakes the paired extension (extension/background/background.js
+    /// watches for it), when one may be opened now: the bridge is listening, nothing
+    /// already collected `id`, no extension came by just now, and no wake in the last
+    /// WAKE_INTERVAL. Records the wake.
+    pub fn may_wake(&mut self, id: &str, now: Instant) -> Option<String> {
+        let port = self.port?;
+        if self.link.command_collected(id) || self.link.extension_awake(now) {
             return None;
         }
-        self.relays.remove(id).and_then(|relay| relay.answer)
-    }
-
-    pub fn cancel_relay(&mut self, id: &str) {
-        self.relays.remove(id);
+        if self.last_wake.is_some_and(|at| now.saturating_duration_since(at) < WAKE_INTERVAL) {
+            return None;
+        }
+        self.last_wake = Some(now);
+        Some(format!("http://127.0.0.1:{port}/v1/wake"))
     }
 }
 
@@ -759,6 +690,11 @@ impl Bridge {
         Ok(())
     }
 
+    /// The webview has asked for paired requests: it is up and answering.
+    pub fn mark_webview_ready(&mut self) {
+        self.webview_ready = true;
+    }
+
     pub fn webview_ready(&self) -> bool {
         self.webview_ready
     }
@@ -893,8 +829,32 @@ pub fn write_response(stream: &mut impl Write, response: &HttpResponse) -> std::
 pub enum Effect {
     /// `items` is tabs for a batch, turns for a conversation.
     Queued { request_id: String, kind: &'static str, items: usize },
-    /// Chrome's answer to a relay arrived.
-    Relayed { id: String },
+    /// The paired extension says something it keeps changed: the webview may want to ask again.
+    Nudged,
+    /// An extension asked to pair: the window shows the dialog.
+    PairRequested,
+    /// A paired request is queued: the response is the webview's answer, written once it arrives.
+    AwaitLink { request_id: String, kind: String, receiver: LinkAnswer },
+}
+
+/// The webview's answer to one paired request, when it comes. Compared and
+/// printed by nothing but its presence, so `Effect` stays testable.
+pub struct LinkAnswer(pub std::sync::mpsc::Receiver<Value>);
+
+impl std::fmt::Debug for LinkAnswer {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("LinkAnswer")
+    }
+}
+
+impl PartialEq for LinkAnswer {
+    fn eq(&self, _: &Self) -> bool {
+        true
+    }
+}
+
+fn link_refusal(refusal: LinkRefusal, allow_origin: Option<String>) -> HttpResponse {
+    HttpResponse { status: refusal.status(), body: json!({ "ok": false, "reason": refusal.reason() }), allow_origin }
 }
 
 fn refusal(refusal: Refusal, allow_origin: Option<String>) -> HttpResponse {
@@ -940,6 +900,8 @@ pub fn route(bridge: &Mutex<Bridge>, request: &HttpRequest, port: u16, now: Inst
                     "ready": bridge.webview_ready(),
                     "maxTabs": MAX_TABS,
                     "kinds": PAYLOAD_KINDS,
+                    // This app pairs with Hubble for Chrome (/v1/pair, /v1/link/*).
+                    "link": 1,
                 }),
                 allow_origin: allow,
             },
@@ -983,18 +945,98 @@ pub fn route(bridge: &Mutex<Bridge>, request: &HttpRequest, port: u16, now: Inst
             Ok(body) => (HttpResponse { status: 200, body, allow_origin: allow }, None),
             Err(r) => (refusal(r, allow), None),
         },
-        ("POST", ["v1", "relay", id]) => match bridge.deliver_relay(id, bearer(request), &request.body, now) {
-            Ok(()) => {
-                log("relay-delivered", &[("relayId", id)]);
-                (HttpResponse { status: 200, body: json!({ "ok": true }), allow_origin: allow }, Some(Effect::Relayed { id: id.to_string() }))
+        // Opened in the browser to wake the paired extension, which closes the tab and collects over the link.
+        // Answers nothing but "Hubble is here", like /v1/hello.
+        ("GET", ["v1", "wake"]) => (HttpResponse { status: 200, body: json!({ "app": "hubble-desktop", "wake": true }), allow_origin: allow }, None),
+        // ---- the paired link (extension_link.rs). Every route is a POST, so it always carries the extension's Origin.
+        ("POST", ["v1", "pair"]) => {
+            let label = serde_json::from_slice::<Value>(&request.body).ok().and_then(|body| body.get("label").and_then(Value::as_str).map(str::to_string));
+            match bridge.link.begin_pairing(extension_origin.as_deref().unwrap_or(""), label.as_deref(), now) {
+                Ok((id, code)) => {
+                    log("pair-requested", &[("pairingId", &id)]);
+                    (
+                        HttpResponse {
+                            status: 201,
+                            body: json!({ "pairingId": id, "code": code, "expiresInMs": extension_link::PAIR_TTL.as_millis() as u64 }),
+                            allow_origin: allow,
+                        },
+                        Some(Effect::PairRequested),
+                    )
+                }
+                Err(r) => (link_refusal(r, allow), None),
             }
-            Err(r) => {
-                log("relay-refused", &[("reason", r.reason())]);
-                (refusal(r, allow), None)
+        }
+        ("POST", ["v1", "pair", id, "status"]) => match bridge.link.pairing_status(id, extension_origin.as_deref().unwrap_or(""), now) {
+            Ok(body) => {
+                log("pair-status", &[("pairingId", id), ("status", body["status"].as_str().unwrap_or(""))]);
+                (HttpResponse { status: 200, body, allow_origin: allow }, None)
             }
+            Err(r) => (link_refusal(r, allow), None),
         },
-        (_, ["v1", "relay", _]) => (refusal(Refusal::MethodNotAllowed, allow), None),
-        (_, ["v1", "hello"]) | (_, ["v1", "sessions"]) | (_, ["v1", "sessions", _]) | (_, ["v1", "sessions", _, "import"]) => {
+        // Hubble proving it holds the link, before the extension sends its token (extension_link.rs, "Hubble proves itself first").
+        ("POST", ["v1", "link", "prove"]) => {
+            let challenge = serde_json::from_slice::<Value>(&request.body).ok().and_then(|body| body.get("challenge").and_then(Value::as_str).map(str::to_string)).unwrap_or_default();
+            match bridge.link.proofs(&challenge, port) {
+                Ok(proofs) => (HttpResponse { status: 200, body: json!({ "proofs": proofs }), allow_origin: allow }, None),
+                Err(r) => (link_refusal(r, allow), None),
+            }
+        }
+        ("POST", ["v1", "link", action]) => {
+            let link_id = match bridge.link.authenticate(bearer(request), extension_origin.as_deref()) {
+                Ok(link_id) => link_id,
+                Err(r) => return (link_refusal(r, allow), None),
+            };
+            match *action {
+                "status" => (
+                    HttpResponse {
+                        status: 200,
+                        body: json!({
+                            "paired": true,
+                            "linkId": link_id,
+                            "app": "hubble-desktop",
+                            "version": env!("CARGO_PKG_VERSION"),
+                            "ready": bridge.webview_ready(),
+                            "kinds": extension_link::LINK_REQUEST_KINDS,
+                            "commands": extension_link::LINK_COMMAND_ACTIONS
+                        }),
+                        allow_origin: allow,
+                    },
+                    None,
+                ),
+                "forget" => {
+                    bridge.link.forget(&link_id);
+                    log("link-forgotten", &[("linkId", &link_id)]);
+                    (HttpResponse { status: 200, body: json!({ "ok": true }), allow_origin: allow }, None)
+                }
+                "request" => match bridge.link.submit(&link_id, &request.body, now) {
+                    Ok((request_id, receiver)) => {
+                        let kind = serde_json::from_slice::<Value>(&request.body).ok().and_then(|v| v.get("kind").and_then(Value::as_str).map(str::to_string)).unwrap_or_default();
+                        log("link-request", &[("requestId", &request_id), ("kind", &kind)]);
+                        (HttpResponse { status: 200, body: Value::Null, allow_origin: allow }, Some(Effect::AwaitLink { request_id, kind, receiver: LinkAnswer(receiver) }))
+                    }
+                    Err(r) => (link_refusal(r, allow), None),
+                },
+                // Commands from Hubble (extension_link.rs, "Commands from Hubble").
+                "commands" => {
+                    let commands = bridge.link.collect_commands(&link_id, now);
+                    if !commands.is_empty() {
+                        log("commands-collected", &[("linkId", &link_id), ("count", &commands.len().to_string())]);
+                    }
+                    (HttpResponse { status: 200, body: json!({ "commands": commands }), allow_origin: allow }, None)
+                }
+                "result" => match bridge.link.finish_command(&link_id, &request.body) {
+                    Ok(id) => {
+                        log("command-answered", &[("commandId", &id)]);
+                        (HttpResponse { status: 200, body: json!({ "ok": true }), allow_origin: allow }, None)
+                    }
+                    Err(r) => (link_refusal(r, allow), None),
+                },
+                "nudge" => (HttpResponse { status: 200, body: json!({ "ok": true }), allow_origin: allow }, Some(Effect::Nudged)),
+                _ => (refusal(Refusal::NotFound, allow), None),
+            }
+        }
+        (_, ["v1", "pair"]) | (_, ["v1", "pair", _, "status"]) | (_, ["v1", "link", _]) => (refusal(Refusal::MethodNotAllowed, allow), None),
+        (_, ["v1", "wake"]) | (_, ["v1", "hello"]) | (_, ["v1", "sessions"]) | (_, ["v1", "sessions", _]) | (_, ["v1", "sessions", _, "import"]) => {
             (refusal(Refusal::MethodNotAllowed, allow), None)
         }
         _ => (refusal(Refusal::NotFound, allow), None),
@@ -1062,10 +1104,22 @@ pub fn start(app: AppHandle, bridge: Arc<Mutex<Bridge>>) {
 fn serve(mut stream: TcpStream, app: &AppHandle, bridge: &Mutex<Bridge>, port: u16) {
     let _ = stream.set_read_timeout(Some(IO_TIMEOUT));
     let _ = stream.set_write_timeout(Some(IO_TIMEOUT));
-    let (response, effect) = match read_request(&mut stream) {
+    let (mut response, effect) = match read_request(&mut stream) {
         Ok(request) => route(bridge, &request, port, Instant::now()),
         Err(status) => (HttpResponse { status, body: json!({ "ok": false, "reason": "bad-request" }), allow_origin: None }, None),
     };
+
+    // A paired request is answered by the webview: wait for it (without holding the bridge), then reply.
+    if let Some(Effect::AwaitLink { request_id, kind, receiver }) = &effect {
+        let _ = app.emit(extension_link::LINK_REQUEST_EVENT, json!({ "requestId": request_id, "kind": kind }));
+        let answer = receiver.0.recv_timeout(extension_link::LINK_ANSWER_TTL + Duration::from_secs(1)).unwrap_or_else(|_| {
+            bridge.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).link.abandon(request_id);
+            json!({ "ok": false, "error": "timed-out" })
+        });
+        log("link-answered", &[("requestId", request_id), ("ok", if answer["ok"] == true { "yes" } else { "no" })]);
+        response.body = answer;
+    }
+
     let _ = write_response(&mut stream, &response);
     let _ = stream.shutdown(Shutdown::Both);
 
@@ -1074,11 +1128,14 @@ fn serve(mut stream: TcpStream, app: &AppHandle, bridge: &Mutex<Bridge>, port: u
             let _ = app.emit(REQUESTED_EVENT, json!({ "requestId": request_id, "kind": kind, "items": items }));
             focus_main_window(app);
         }
-        Some(Effect::Relayed { id }) => {
-            let _ = app.emit(RELAY_DELIVERED_EVENT, json!({ "id": id }));
+        Some(Effect::Nudged) => {
+            let _ = app.emit(extension_link::LINK_NUDGE_EVENT, json!({}));
+        }
+        Some(Effect::PairRequested) => {
+            let _ = app.emit(extension_link::PAIR_REQUESTED_EVENT, json!({}));
             focus_main_window(app);
         }
-        None => {}
+        Some(Effect::AwaitLink { .. }) | None => {}
     }
 }
 
@@ -1119,37 +1176,126 @@ pub fn desktop_import_finish(
     result
 }
 
-/// Asks Chrome something, through the person's browser (see "The relay").
-/// `args` is the action's parameters (a history range), passed to the page
-/// as base64url JSON in the fragment. Returns the relay id to wait on.
+/* ---------------- the paired link (extension_link.rs) ---------------- */
+
+/// Pairing requests waiting for the person.
 #[tauri::command]
-pub fn desktop_relay_begin(app: AppHandle, state: tauri::State<'_, ImportBridgeState>, action: String, args: Value) -> Result<String, String> {
-    let args = args.to_string();
-    if args.len() > 1024 || !args.starts_with('{') {
-        return Err("Unexpected request.".into());
+pub fn desktop_pair_pending(state: tauri::State<'_, ImportBridgeState>) -> Vec<Value> {
+    state.0.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).link.pending_pairings(Instant::now())
+}
+
+/// The person's answer to one pairing request.
+#[tauri::command]
+pub fn desktop_pair_answer(state: tauri::State<'_, ImportBridgeState>, id: String, approve: bool) -> Result<(), String> {
+    let result = state.0.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).link.answer_pairing(&id, approve, Instant::now());
+    log("pair-answered", &[("pairingId", &id), ("approved", if approve { "yes" } else { "no" }), ("recorded", if result.is_ok() { "yes" } else { "no" })]);
+    result
+}
+
+/// Paired extensions, for Settings (never their token hashes).
+#[tauri::command]
+pub fn desktop_link_list(state: tauri::State<'_, ImportBridgeState>) -> Vec<Value> {
+    state.0.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).link.list()
+}
+
+/// Settings → Disconnect.
+#[tauri::command]
+pub fn desktop_link_revoke(state: tauri::State<'_, ImportBridgeState>, id: String) -> bool {
+    state.0.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).link.revoke(&id)
+}
+
+/// Paired requests waiting for the webview. Calling it also marks the webview ready.
+#[tauri::command]
+pub fn desktop_link_take(state: tauri::State<'_, ImportBridgeState>) -> Vec<Value> {
+    let mut bridge = state.0.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    bridge.mark_webview_ready();
+    bridge.link.take(Instant::now())
+}
+
+/// The webview's answer to one paired request.
+#[tauri::command]
+pub fn desktop_link_answer(state: tauri::State<'_, ImportBridgeState>, request_id: String, answer: Value) -> Result<(), String> {
+    state.0.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).link.answer(&request_id, answer)
+}
+
+/// Whether a Hubble for Chrome is paired — what the webview shows as "Chrome connected".
+#[tauri::command]
+pub fn desktop_link_paired(state: tauri::State<'_, ImportBridgeState>) -> bool {
+    state.0.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).link.is_paired()
+}
+
+/// Asks the paired Hubble for Chrome to run one browser command and waits for
+/// its answer (extension_link.rs, "Commands from Hubble"). Always resolves with
+/// `{ ok: true, result }` or `{ ok: false, error }`; `error` is "not-paired",
+/// "extension-unreachable" (nothing collected it: Chrome is closed, or isn't the
+/// default browser), "timed-out", or the extension's own message.
+///
+/// `wake` is for commands the person just asked for: when no extension is
+/// awake, Chrome is woken through the default browser. Background reads pass
+/// false and simply wait for the extension to come by.
+#[tauri::command]
+pub async fn desktop_link_command(app: AppHandle, state: tauri::State<'_, ImportBridgeState>, action: String, args: Value, timeout_ms: u64, wake: bool) -> Result<Value, String> {
+    let bridge = Arc::clone(&state.0);
+    let ttl = Duration::from_millis(timeout_ms.clamp(1_000, extension_link::MAX_COMMAND_TTL.as_millis() as u64));
+    let queued = bridge.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).link.queue_command(&action, args, ttl, Instant::now());
+    let (id, receiver) = match queued {
+        Ok(queued) => queued,
+        Err(error) => return Ok(json!({ "ok": false, "error": error })),
+    };
+    log("command-queued", &[("commandId", &id), ("action", &action), ("wake", if wake { "yes" } else { "no" })]);
+    let waker = app.clone();
+    let (answer, woke) = tauri::async_runtime::spawn_blocking(move || {
+        let started = Instant::now();
+        let deadline = started + ttl + Duration::from_millis(250);
+        let mut woke = false;
+        if wake {
+            if let Ok(answer) = receiver.recv_timeout(WAKE_GRACE.min(ttl)) {
+                return (answer, false);
+            }
+            // Keep watching while waiting: an extension that collected a moment ago (so needed no wake) may stop
+            // collecting before it comes by again. Once it has been quiet for AWAKE_WINDOW and still hasn't taken
+            // this command, wake it — may_wake also holds wakes to one per WAKE_INTERVAL.
+            while !woke {
+                let address = bridge.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).may_wake(&id, Instant::now());
+                if let Some(address) = address.and_then(|a| tauri::Url::parse(&a).ok()) {
+                    log("extension-wake", &[("commandId", &id)]);
+                    match crate::account::open_in_browser(&waker, &address) {
+                        Ok(()) => woke = true,
+                        Err(error) => {
+                            log("extension-wake-failed", &[("reason", &error)]);
+                            break;
+                        }
+                    }
+                    break;
+                }
+                if bridge.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).link.command_collected(&id) {
+                    break;
+                }
+                match receiver.recv_timeout(WAKE_RECHECK.min(deadline.saturating_duration_since(Instant::now()))) {
+                    Ok(answer) => return (answer, false),
+                    Err(_) if Instant::now() >= deadline => break,
+                    Err(_) => {}
+                }
+            }
+        }
+        let left = deadline.saturating_duration_since(Instant::now());
+        let answer = receiver.recv_timeout(left).unwrap_or_else(|_| {
+            let mut bridge = bridge.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+            let error = if bridge.link.command_collected(&id) { "timed-out" } else { "extension-unreachable" };
+            bridge.link.abandon_command(&id);
+            json!({ "ok": false, "error": error })
+        });
+        (answer, woke)
+    })
+    .await
+    .map_err(|e| e.to_string())?;
+    log("command-finished", &[("action", &action), ("ok", if answer["ok"] == true { "yes" } else { "no" })]);
+    // Waking Chrome brought it to the front. For a question (not "open these in Chrome") the person is still working
+    // in Hubble, so its window comes back.
+    if woke && !matches!(action.as_str(), "open_url" | "open_tabs" | "open_session" | "request_context_access") {
+        focus_main_window(&app);
     }
-    let (id, secret, port) = state.0.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).open_relay(&action, Instant::now())?;
-    let mut url = tauri::Url::parse(crate::account::account_origin()).map_err(|e| e.to_string())?;
-    url.set_path("/desktop/relay");
-    url.set_fragment(Some(&format!(
-        "id={id}&secret={secret}&port={port}&action={action}&args={}",
-        crate::account::base64url(args.as_bytes())
-    )));
-    log("relay-opened", &[("relayId", &id), ("action", &action)]);
-    crate::account::open_in_browser(&app, &url)?;
-    Ok(id)
-}
-
-/// Chrome's answer to a relay, once it has arrived (`null` until then).
-#[tauri::command]
-pub fn desktop_relay_take(state: tauri::State<'_, ImportBridgeState>, id: String) -> Option<Value> {
-    state.0.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).take_relay(&id)
-}
-
-/// Gives up on a relay: a late answer is then refused.
-#[tauri::command]
-pub fn desktop_relay_cancel(state: tauri::State<'_, ImportBridgeState>, id: String) {
-    state.0.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).cancel_relay(&id);
+    Ok(answer)
 }
 
 /* ------------------------------------------------------------------ *
@@ -1159,73 +1305,10 @@ pub fn desktop_relay_cancel(state: tauri::State<'_, ImportBridgeState>, id: Stri
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sha2::{Digest, Sha256};
 
     const PORT: u16 = 41517;
 
-    fn relay_bridge(now: Instant) -> (Mutex<Bridge>, String, String) {
-        let mut bridge = Bridge::default();
-        bridge.set_port(PORT);
-        let (id, secret, port) = bridge.open_relay("browser_tabs", now).unwrap();
-        assert_eq!(port, PORT);
-        (Mutex::new(bridge), id, secret)
-    }
-
-    fn deliver(bridge: &Mutex<Bridge>, id: &str, secret: &str, origin: Option<&str>, body: &Value, now: Instant) -> HttpResponse {
-        let auth = format!("Bearer {secret}");
-        // The helper sends the extension Origin unless told otherwise; "" removes it.
-        let headers = [("authorization", auth.as_str()), ("origin", origin.unwrap_or(""))];
-        route(bridge, &request("POST", &format!("/v1/relay/{id}"), &headers, body.to_string().as_bytes()), PORT, now).0
-    }
-
-    #[test]
-    fn a_relay_answer_arrives_once_from_the_extension_with_the_secret() {
-        let now = Instant::now();
-        let (bridge, id, secret) = relay_bridge(now);
-        let answer = json!({ "action": "browser_tabs", "ok": true, "result": { "tabs": [], "windows": [] } });
-        // Not yet answered.
-        assert!(bridge.lock().unwrap().take_relay(&id).is_none());
-        // A web page (no extension Origin) and a wrong secret are refused.
-        assert_eq!(deliver(&bridge, &id, &secret, None, &answer, now).status, 403);
-        assert_eq!(deliver(&bridge, &id, &secret, Some("https://evil.example"), &answer, now).status, 403);
-        assert_eq!(deliver(&bridge, &id, &"0".repeat(64), Some(EXT), &answer, now).status, 401);
-        // The wrong action is refused; the right one lands, once.
-        let wrong = json!({ "action": "history", "ok": true, "result": {} });
-        assert_eq!(deliver(&bridge, &id, &secret, Some(EXT), &wrong, now).status, 400);
-        assert_eq!(deliver(&bridge, &id, &secret, Some(EXT), &answer, now).status, 200);
-        assert_eq!(deliver(&bridge, &id, &secret, Some(EXT), &answer, now).status, 409);
-        let taken = bridge.lock().unwrap().take_relay(&id).unwrap();
-        assert_eq!(taken["ok"], json!(true));
-        assert!(bridge.lock().unwrap().take_relay(&id).is_none());
-    }
-
-    #[test]
-    fn a_declined_relay_carries_only_a_short_reason() {
-        let now = Instant::now();
-        let (bridge, id, secret) = relay_bridge(now);
-        let declined = json!({ "action": "browser_tabs", "ok": false, "error": "x".repeat(1000) });
-        assert_eq!(deliver(&bridge, &id, &secret, Some(EXT), &declined, now).status, 200);
-        let taken = bridge.lock().unwrap().take_relay(&id).unwrap();
-        assert_eq!(taken["error"].as_str().unwrap().len(), 300);
-    }
-
-    #[test]
-    fn relays_expire_are_cancellable_and_only_ask_known_questions() {
-        let now = Instant::now();
-        let (bridge, id, secret) = relay_bridge(now);
-        let answer = json!({ "action": "browser_tabs", "ok": true, "result": {} });
-        assert_eq!(deliver(&bridge, &id, &secret, Some(EXT), &answer, now + RELAY_TTL).status, 404);
-        let (bridge, id, secret) = relay_bridge(now);
-        bridge.lock().unwrap().cancel_relay(&id);
-        assert_eq!(deliver(&bridge, &id, &secret, Some(EXT), &answer, now).status, 404);
-        let mut fresh = Bridge::default();
-        assert!(fresh.open_relay("browser_tabs", now).is_err(), "no port bound yet");
-        fresh.set_port(PORT);
-        assert!(fresh.open_relay("open_tabs", now).is_err());
-        for _ in 0..MAX_RELAYS {
-            fresh.open_relay("history", now).unwrap();
-        }
-        assert!(fresh.open_relay("history", now).is_err());
-    }
     const EXT: &str = "chrome-extension://abcdefghijklmnopabcdefghijklmnop";
 
     fn payload(tabs: Value) -> Vec<u8> {
@@ -1598,6 +1681,148 @@ mod tests {
         assert_eq!(hello.body["ready"], false);
         bridge.lock().unwrap().take(now);
         assert_eq!(route(&bridge, &request("GET", "/v1/hello", &[], b""), PORT, now).0.body["ready"], true);
+    }
+
+    fn post_as(origin: &str, path: &str, token: Option<&str>, body: &Value) -> HttpRequest {
+        let auth = token.map(|t| format!("Bearer {t}"));
+        let mut headers: Vec<(&str, &str)> = vec![("origin", origin)];
+        if let Some(auth) = auth.as_deref() {
+            headers.push(("authorization", auth));
+        }
+        request("POST", path, &headers, body.to_string().as_bytes())
+    }
+
+    /// Pairs EXT through the routes, approving in "the window"; returns the token.
+    fn pair_over_http(bridge: &Mutex<Bridge>, now: Instant) -> String {
+        let (begun, effect) = route(bridge, &post_as(EXT, "/v1/pair", None, &json!({ "label": "Chrome" })), PORT, now);
+        assert_eq!(begun.status, 201);
+        assert_eq!(effect, Some(Effect::PairRequested));
+        let id = begun.body["pairingId"].as_str().unwrap().to_string();
+        assert_eq!(begun.body["code"].as_str().unwrap().len(), 6);
+        bridge.lock().unwrap().link.answer_pairing(&id, true, now).unwrap();
+        let status = route(bridge, &post_as(EXT, &format!("/v1/pair/{id}/status"), None, &json!({})), PORT, now).0;
+        assert_eq!(status.body["status"], "approved");
+        status.body["token"].as_str().unwrap().to_string()
+    }
+
+    #[test]
+    fn pairing_and_paired_requests_go_only_to_the_paired_extension() {
+        let bridge = Mutex::new(Bridge::default());
+        let now = Instant::now();
+        // A web page can't even ask.
+        assert_eq!(route(&bridge, &post_as("https://evil.example", "/v1/pair", None, &json!({})), PORT, now).0.status, 403);
+        let token = pair_over_http(&bridge, now);
+        let other = "chrome-extension://ponmlkjihgfedcbaponmlkjihgfedcba";
+        // Status needs the token and the origin it was issued to.
+        let status = route(&bridge, &post_as(EXT, "/v1/link/status", Some(&token), &json!({})), PORT, now).0;
+        assert_eq!(status.status, 200);
+        assert_eq!(status.body["paired"], true);
+        assert_eq!(route(&bridge, &post_as(other, "/v1/link/status", Some(&token), &json!({})), PORT, now).0.status, 401);
+        assert_eq!(route(&bridge, &post_as(EXT, "/v1/link/status", None, &json!({})), PORT, now).0.status, 401);
+        assert_eq!(route(&bridge, &post_as(EXT, "/v1/link/status", Some(&"f".repeat(64)), &json!({})), PORT, now).0.status, 401);
+        // A paired request is queued for the webview and answered through the same response.
+        let (response, effect) = route(&bridge, &post_as(EXT, "/v1/link/request", Some(&token), &json!({ "requestId": "q1", "kind": "projects" })), PORT, now);
+        assert_eq!(response.status, 200);
+        let Some(Effect::AwaitLink { request_id, kind, receiver }) = effect else { panic!("expected a waiting request") };
+        assert_eq!((request_id.as_str(), kind.as_str()), ("q1", "projects"));
+        assert_eq!(bridge.lock().unwrap().link.take(now).len(), 1);
+        bridge.lock().unwrap().link.answer("q1", json!({ "ok": true, "result": { "projects": [] } })).unwrap();
+        assert_eq!(receiver.0.recv().unwrap()["ok"], true);
+        // Unknown kinds never reach the webview.
+        assert_eq!(route(&bridge, &post_as(EXT, "/v1/link/request", Some(&token), &json!({ "requestId": "q2", "kind": "exec" })), PORT, now).0.status, 400);
+        // GET is not a way in.
+        assert_eq!(route(&bridge, &request("GET", "/v1/link/status", &[("authorization", &format!("Bearer {token}"))], b""), PORT, now).0.status, 405);
+        // The extension forgetting the link revokes it here too.
+        assert_eq!(route(&bridge, &post_as(EXT, "/v1/link/forget", Some(&token), &json!({})), PORT, now).0.status, 200);
+        assert_eq!(route(&bridge, &post_as(EXT, "/v1/link/status", Some(&token), &json!({})), PORT, now).0.status, 401);
+    }
+
+    #[test]
+    fn commands_from_hubble_reach_only_the_paired_extension_and_its_answer_comes_back() {
+        let bridge = Mutex::new(Bridge::default());
+        let now = Instant::now();
+        let token = pair_over_http(&bridge, now);
+        let other = "chrome-extension://ponmlkjihgfedcbaponmlkjihgfedcba";
+        let (id, receiver) = bridge.lock().unwrap().link.queue_command("list_browser_tabs", json!({}), Duration::from_secs(10), now).unwrap();
+        // Neither a web page, another extension, nor a missing token can collect it.
+        assert_eq!(route(&bridge, &post_as("https://evil.example", "/v1/link/commands", Some(&token), &json!({})), PORT, now).0.status, 403);
+        assert_eq!(route(&bridge, &post_as(other, "/v1/link/commands", Some(&token), &json!({})), PORT, now).0.status, 401);
+        assert_eq!(route(&bridge, &post_as(EXT, "/v1/link/commands", None, &json!({})), PORT, now).0.status, 401);
+        assert_eq!(route(&bridge, &request("GET", "/v1/link/commands", &[("authorization", &format!("Bearer {token}"))], b""), PORT, now).0.status, 405);
+        let collected = route(&bridge, &post_as(EXT, "/v1/link/commands", Some(&token), &json!({})), PORT, now).0;
+        assert_eq!(collected.status, 200);
+        assert_eq!(collected.body["commands"], json!([{ "id": id, "action": "list_browser_tabs", "args": {} }]));
+        assert_eq!(route(&bridge, &post_as(EXT, "/v1/link/commands", Some(&token), &json!({})), PORT, now).0.body["commands"], json!([]));
+        // The answer needs the token too, and lands once.
+        let answer = json!({ "id": id, "ok": true, "result": { "tabs": [] } });
+        assert_eq!(route(&bridge, &post_as(other, "/v1/link/result", Some(&token), &answer), PORT, now).0.status, 401);
+        assert_eq!(route(&bridge, &post_as(EXT, "/v1/link/result", Some(&token), &answer), PORT, now).0.status, 200);
+        assert_eq!(route(&bridge, &post_as(EXT, "/v1/link/result", Some(&token), &answer), PORT, now).0.status, 404);
+        assert_eq!(receiver.recv().unwrap(), json!({ "ok": true, "result": { "tabs": [] } }));
+        // "Something changed" reaches the webview as an event, and carries nothing.
+        let (nudged, effect) = route(&bridge, &post_as(EXT, "/v1/link/nudge", Some(&token), &json!({ "anything": 1 })), PORT, now);
+        assert_eq!((nudged.status, effect), (200, Some(Effect::Nudged)));
+        assert_eq!(route(&bridge, &post_as(EXT, "/v1/link/nudge", None, &json!({})), PORT, now).0.status, 401);
+        // The status tells the extension which commands this app sends.
+        let status = route(&bridge, &post_as(EXT, "/v1/link/status", Some(&token), &json!({})), PORT, now).0;
+        assert_eq!(status.body["commands"].as_array().unwrap().len(), extension_link::LINK_COMMAND_ACTIONS.len());
+    }
+
+    #[test]
+    fn the_proof_route_answers_extensions_only_and_proves_each_paired_link() {
+        let bridge = Mutex::new(Bridge::default());
+        let now = Instant::now();
+        let challenge = json!({ "challenge": "a".repeat(32) });
+        // Nothing paired yet: an empty list, never an error that tells a prober anything.
+        let empty = route(&bridge, &post_as(EXT, "/v1/link/prove", None, &challenge), PORT, now).0;
+        assert_eq!((empty.status, empty.body.clone()), (200, json!({ "proofs": [] })));
+        let token = pair_over_http(&bridge, now);
+        let proved = route(&bridge, &post_as(EXT, "/v1/link/prove", None, &challenge), PORT, now).0;
+        let key = Sha256::digest(token.as_bytes()).iter().map(|b| format!("{b:02x}")).collect::<String>();
+        let expected: String = extension_link::hmac_sha256(key.as_bytes(), format!("hubble-link-proof:v1:{PORT}:{}", "a".repeat(32)).as_bytes()).iter().map(|b| format!("{b:02x}")).collect();
+        assert_eq!(proved.body["proofs"], json!([expected]));
+        // A web page can't ask, and a malformed challenge is refused.
+        assert_eq!(route(&bridge, &post_as("https://evil.example", "/v1/link/prove", None, &challenge), PORT, now).0.status, 403);
+        assert_eq!(route(&bridge, &post_as(EXT, "/v1/link/prove", None, &json!({ "challenge": "xyz" })), PORT, now).0.status, 400);
+        // The token never appears in an answer.
+        assert!(!proved.body.to_string().contains(&token));
+    }
+
+    #[test]
+    fn the_wake_address_answers_only_that_hubble_is_here_and_is_opened_sparingly() {
+        let mut bridge = Bridge::default();
+        let now = Instant::now();
+        let shared = Mutex::new(Bridge::default());
+        let wake = route(&shared, &request("GET", "/v1/wake", &[], b""), PORT, now).0;
+        assert_eq!((wake.status, wake.body.clone()), (200, json!({ "app": "hubble-desktop", "wake": true })));
+        assert_eq!(route(&shared, &request("POST", "/v1/wake", &[("origin", EXT)], b"{}"), PORT, now).0.status, 405);
+        assert_eq!(route(&shared, &request("GET", "/v1/wake", &[("host", "evil.example:41517")], b""), PORT, now).0.status, 403);
+
+        // No port bound yet: nothing to open.
+        assert_eq!(bridge.may_wake("x", now), None);
+        bridge.set_port(PORT);
+        assert_eq!(bridge.may_wake("x", now).as_deref(), Some("http://127.0.0.1:41517/v1/wake"));
+        // Once per interval.
+        assert_eq!(bridge.may_wake("x", now + Duration::from_secs(1)), None);
+        let later = now + WAKE_INTERVAL;
+        // Not when an extension just came by, or already collected the command.
+        bridge.link.collect_commands("link", later);
+        assert_eq!(bridge.may_wake("x", later), None);
+        assert_eq!(bridge.may_wake("x", later + extension_link::AWAKE_WINDOW).as_deref(), Some("http://127.0.0.1:41517/v1/wake"));
+    }
+
+    #[test]
+    fn another_extension_cannot_collect_a_pairing() {
+        let bridge = Mutex::new(Bridge::default());
+        let now = Instant::now();
+        let begun = route(&bridge, &post_as(EXT, "/v1/pair", None, &json!({})), PORT, now).0;
+        let id = begun.body["pairingId"].as_str().unwrap().to_string();
+        bridge.lock().unwrap().link.answer_pairing(&id, true, now).unwrap();
+        let other = "chrome-extension://ponmlkjihgfedcbaponmlkjihgfedcba";
+        assert_eq!(route(&bridge, &post_as(other, &format!("/v1/pair/{id}/status"), None, &json!({})), PORT, now).0.status, 404);
+        assert_eq!(route(&bridge, &post_as(EXT, &format!("/v1/pair/{id}/status"), None, &json!({})), PORT, now).0.body["status"], "approved");
+        let hello = route(&bridge, &request("GET", "/v1/hello", &[], b""), PORT, now).0;
+        assert_eq!(hello.body["link"], 1);
     }
 
     #[test]
