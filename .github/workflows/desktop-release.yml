@@ -163,9 +163,12 @@ jobs:
           # The website takes only these exact names (src/lib/desktop/artifacts.ts classifyAsset).
           ls -la dist
           cd dist
+          # Written outside dist/ while hashing, so the list never names itself; "hash *name" (sha256sum's
+          # binary marker on Windows) is normalised to "hash  name" so `sha256sum -c` and the table read it.
           for file in *; do
             if command -v sha256sum >/dev/null; then sha256sum "$file"; else shasum -a 256 "$file"; fi
-          done > "SHA256SUMS-${{ runner.os }}.txt"
+          done | sed 's/ \*/  /' > "../SHA256SUMS-${{ runner.os }}.txt"
+          mv "../SHA256SUMS-${{ runner.os }}.txt" .
           cat "SHA256SUMS-${{ runner.os }}.txt"
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

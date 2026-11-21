@@ -1,15 +1,18 @@
 # Hubble Desktop — release readiness (audit of 2026-11-21)
 
-Branch `claude/hubble-desktop-only-8ef448` (PR #59 + follow-ups). Nothing here is
-merged, deployed or released. "Real" means the actual extension in system
+Updated 2026-11-21 after release: PRs #59, #61 and #60 are merged to `main`
+(live at https://hubblehq.vercel.app) and Hubble Desktop 0.2.0 is published
+(https://github.com/Biterate-7/tabs/releases/tag/desktop-v0.2.0). "Real" means the actual extension in system
 Chrome against an actual running Hubble build; "unit" means automated tests;
 "static" means inspected, not run.
 
 ## Verdict
 
-**Not ready to release.** Three blockers sit outside the code (publishing 0.2.0,
-production accounts, code signing), and the website identity should be fixed
-first. The crash data-loss issue found in this audit is fixed.
+**Released as 0.2.0, with two known gaps outside the code:** production
+accounts (sign-in, sync and AI connectors answer 503 until the `hubble` Vercel
+project has a database — the site and release notes say so) and code signing
+(SmartScreen / Gatekeeper warn on first open). Everything else found in this
+audit is fixed.
 
 ## Status
 
@@ -23,22 +26,22 @@ first. The crash data-loss issue found in this audit is fixed.
 | Knowledge Graph | Not exercised live | Unit tests (graph suites pass in the full run); its data is the project store, now crash-safe | — |
 | Local storage | Works, crash-safe | Real: the full sequence ended by a force-kill keeps the newest project + conversation (before the fix it lost them, twice); a project survives a kill ~1 s after it was made | Fixed **High** (durable copy, below). Multi-account isolation: unit-tested namespaces only (no second real account) |
 | Security | Fixed what was found | Unit + real: proof-before-token, allowlisted commands, per-link answers, loopback + Host checks, web origins refused | Fixed **Critical**: the extension sent its token (and saves) to whatever program answered on Hubble's port. Same-user malware can read Chrome's and Hubble's storage — out of scope |
-| Windows installer | Builds; unsigned | Static: CI `Hubble_0.2.0_x64-setup.exe` / `.msi` — version 0.2.0, product Hubble, **NotSigned**. Real: QA-identity NSIS installs per-user in ~2 s, Start-menu entry, `hubble://`, uninstall entry; silent uninstall removes all of them | **Critical (launch):** no code signing → SmartScreen warning. Low: empty CompanyName in the .exe version info. The production-identity installer was not run on this machine |
-| macOS installer | Built by CI only | Static: `Hubble_0.2.0_universal.dmg` (30.6 MB) | Never installed or launched; unsigned and not notarized → Gatekeeper blocks a normal open |
-| Linux installer | Built by CI only | Static: `.deb` control — `hubble` 0.2.0 amd64, depends libwebkit2gtk-4.1-0, libgtk-3-0; `.AppImage` 96 MB | Never installed. Sign-in persistence needs a Secret Service (gnome-keyring) at runtime, not declared |
-| Marketing website | Builds; not deployed | Real (local `next start` of this branch): 8 pages 200, no JS errors, no broken links, `/welcome` → `/`, no app routes or "Open Hubble" | **Critical:** "Download for Windows" serves 0.1.0 (only published release — dead origin, no pairing). **High:** not the midnight identity (warm brown + orange); the midnight site is PR #60, which conflicts with #59. Production still serves the old web app until this ships |
+| Windows installer | **Published (0.2.0)**; unsigned | Release `desktop-v0.2.0` (built from `17e7e5d9` by the release workflow): `Hubble_0.2.0_x64-setup.exe` / `.msi` — version 0.2.0, product Hubble, **NotSigned**; checksums verified against GitHub's digests. Real: QA-identity NSIS installs per-user in ~2 s, Start-menu entry, `hubble://`, uninstall entry; silent uninstall removes all of them | **Critical (launch quality):** no code signing → SmartScreen warning. Low: empty CompanyName in the .exe version info. The production-identity installer was not run on the audit machine (it holds real Hubble data) |
+| macOS installer | **Published (0.2.0)**; never run | `Hubble_0.2.0_universal.dmg` (30.8 MB), checksum verified | Never installed or launched; unsigned and not notarized → Gatekeeper blocks a normal open (right-click → Open) |
+| Linux installer | **Published (0.2.0)**; never installed | `.deb` control — `hubble` 0.2.0 amd64, depends libwebkit2gtk-4.1-0, libgtk-3-0; `.AppImage` 96.5 MB; checksums verified | Never installed. Sign-in persistence needs a Secret Service (gnome-keyring) at runtime, not declared |
+| Marketing website | **Live**, midnight | Production (`hubblehq.vercel.app`, from `main`): launch site, `/welcome` → `/`, no app routes or "Open Hubble"; download buttons follow the published release. Local build of the merged site: 8 pages 200, no broken links, no overflow at 390/768/1440 px, palette test passes | — |
 
 ## Issues by severity
 
 **Critical (blocks release)**
-1. Only `desktop-v0.1.0` is published; the site offers it. Publish 0.2.0 (tag → draft → check → publish).
+1. ~~Only `desktop-v0.1.0` is published~~ — **done**: 0.2.0 published 2026-11-21; the site offers it.
 2. Production accounts unavailable (no database on the `hubble` Vercel project).
 3. No code signing (Windows SmartScreen, macOS Gatekeeper).
 4. ~~Token sent to whatever answers on Hubble's port~~ — **fixed** (`/v1/link/prove`).
 
 **High**
 1. ~~Crash / force-kill loses recent project edits~~ — **fixed**: every localStorage change is mirrored within ~100 ms to a durable copy in the app's data folder (`src-tauri/src/durable_store.rs`, `src/lib/platform/durable-storage.ts`; temp file → sync → rename) and restored before the app reads anything. The copy is trusted only while complete; a failed write drops that mark and Hubble falls back to localStorage. Not covered: IndexedDB (conversation text, files), which already commits per transaction.
-2. Website is not the midnight identity — reconcile PR #60 with #59.
+2. ~~Website is not the midnight identity~~ — **done**: PR #60 merged on top of #59/#61.
 3. ~~Context detection empty in Hubble Desktop~~ — **fixed**.
 4. ~~Command lost when the extension went quiet right after collecting~~ — **fixed** (re-check and wake while waiting).
 5. ~~New users not told they need Hubble for Chrome~~ — **fixed** (welcome offers Connect Chrome).
