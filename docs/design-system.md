@@ -92,6 +92,42 @@ Rules:
    breathing), and only while it is on screen, the page is visible and motion
    is allowed. Otherwise it too draws only when something changed.
 
+## The website
+
+The public pages (the launch page at `/`, `/download`, `/move` and the legal
+pages) are **midnight black and monochrome**, whatever theme the visitor uses
+in the app. `.tabdump-marketing` in `src/app/marketing.css`
+restates every semantic token in one palette — grounds `#08090b` › `#0d0e11` ›
+`#121419`, ink `#f5f5f5`, secondary `#92949b`, metadata `#7c8089` (the
+palette's `#666a73` walked up to clear AA; `#666a73` itself is for glyphs and
+placeholders), hairlines `#25272d` — including every token the app would
+colour (`--link`, `--info`, `--selection`, `--kind-*`, `--graph-*`, statuses),
+so no component default can bring blue back. Links are white with an arrow.
+The only colour on these pages is the AI apps' own logos.
+`src/components/marketing/marketing-palette.test.ts` enforces this.
+
+The composition follows cursor.com: a 52px header, a short left-aligned hero
+(Download for the visitor's OS) over a large staged product window, a row of
+the apps Hubble works with, the app and its Chrome companion, feature cards
+(words low in a 383px column, a window on a stage beside them), a centred
+statement with the loop, a changelog row, a 72–88px closing line and a footer
+on the card tone. Hubble is a desktop app: no action on the site opens a web
+app, and anything that needs an account (AI connectors) says it arrives with
+sign-in (`CONNECTORS_AVAILABILITY` in `launch-page.tsx`) until accounts are
+switched on.
+
+Every window is drawn from a fixed sample project
+(`marketing/sample-knowledge.ts`) by the product's own code — search
+(`searchKnowledge`), the Use in AI text (`buildMemoryBundle`), proposal
+wording (`planStepLine`), activity labels, the provider registry — and is
+driven by `showcase/use-timeline.ts`: frames advance only while the window is
+on screen and the tab is visible; a visitor who prefers reduced motion (or has
+no script) sees a complete, still frame and can still step through it.
+Motion is CSS: a load-time entrance, the scroll reveal (`reveal.tsx`), and
+scroll-driven parallax (`animation-timeline: view()`, skipped where
+unsupported). Never claim a feature in a window that the product does not
+have, and show a result where the app actually shows it.
+
 ## The Graph
 
 `src/lib/knowledge-graph` (data, layout, camera) and

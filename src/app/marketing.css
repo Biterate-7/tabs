@@ -5,85 +5,128 @@
  * identifier, see brand/README.md). The scope works by REDEFINING the app's
  * own semantic tokens rather than inventing a parallel set, for two reasons:
  *
- *  1. The product demos on this page are the product's real components
- *     (session list, event stream, approval card, composer, favicons). Inside
- *     this scope their tokens resolve to the page's palette, so the page shows
- *     the actual interface rather than a redrawn lookalike.
+ *  1. The product demos on this page are drawn with the product's own
+ *     components and utilities (provider marks, kind glyphs, buttons, the
+ *     search highlighter). Inside this scope their tokens resolve to the
+ *     page's palette, so they read as the product, not a lookalike.
  *  2. The page is brand-controlled. AppearanceProvider writes the user's app
  *     theme onto :root; a descendant redefining the same properties wins for
  *     its own subtree, so a visitor's app theme never restyles the page, and
  *     nothing here leaks back into the app.
  *
- * The live product windows on the page (`.m-app`) are the exception: they
- * carry the app's own palette, not this one — see app-theme.tsx.
+ * Midnight black, and only that. The site has one identity — near-black
+ * grounds, white ink, grey tiers, hairlines — and no chromatic accent at all:
+ * links are white with an arrow, the selected thing is a brighter surface,
+ * and the only colour on the page is the AI apps' own logos. Every token
+ * that the app would make chromatic (link, info, selection, kinds, graph,
+ * statuses) is restated here as a grey so nothing blue can leak in from a
+ * component's defaults. `marketing-palette.test.ts` holds the file to that.
  *
- * The palette follows the visitor's system colour scheme, like the reference
- * site, with an explicit override on [data-scheme] set by the footer toggle.
- * Values are the reference's own, measured from the rendered page: a warm
- * paper ground (#f7f7f4) and warm ink (#26251e), a card one step off the
- * ground, and every other tier the foreground at a fixed alpha.
+ * The composition is the reference's (cursor.com, measured at 1440px): a
+ * 52px header on the page ground, a 1300px container with 20px gutters,
+ * feature cards one step above the ground with their text set low at the
+ * left, product windows resting on a stage a step above the card.
  */
 
 .tabdump-marketing {
-  color-scheme: light;
+  color-scheme: dark;
 
-  /* ---- Ground and ink ------------------------------------------------ */
-  --background: #f7f7f4;
-  --background-secondary: #f2f1ed;
-  --background-tertiary: #ebeae5;
-  --foreground: #26251e;
-  --card: #f2f1ed;
-  --card-foreground: #26251e;
-  --popover: #fbfbf9;
-  --popover-foreground: #26251e;
-  --surface: #f2f1ed;
-  --surface-hover: #ebeae5;
-  --surface-active: #e6e5e0;
-  --surface-selected: #ebeae5;
-  --surface-elevated: #fbfbf9;
-  --sidebar: #f2f1ed;
-  --secondary: #e6e5e0;
-  --secondary-foreground: #26251e;
-  --muted: #f2f1ed;
-  --accent: #ebeae5;
-  --accent-foreground: #26251e;
+  /* ---- Midnight palette ---------------------------------------------- */
+  --m-ground: #08090b;
+  --m-ground-2: #0d0e11;
+  --m-ground-3: #121419;
+  --m-ground-4: #17191e;
+  --m-ground-5: #1d1f25;
+  --m-ink: #f5f5f5;
+  --m-ink-2: #92949b;
+  /* Legible metadata: the palette's muted grey (#666a73) walked up the least
+     amount that clears 4.5:1 on every ground above. #666a73 itself is kept
+     for things that are not text — placeholders, glyphs, rules. */
+  --m-ink-3: #7c8089;
+  --m-ink-4: #666a73;
+  --m-line: #25272d;
+  --m-line-soft: #1a1c21;
+  --m-line-strong: #34373e;
 
-  /* ---- Text tiers (foreground at 60 / 40 / 30%) ----------------------- */
-  --muted-foreground: rgb(38 37 30 / 0.6);
-  --text-secondary: rgb(38 37 30 / 0.6);
-  --text-tertiary: rgb(38 37 30 / 0.4);
-  --text-disabled: rgb(38 37 30 / 0.3);
+  /* ---- The app's semantic tokens, in that palette --------------------- */
+  --background: var(--m-ground);
+  --background-secondary: var(--m-ground-2);
+  --background-tertiary: var(--m-ground-3);
+  --foreground: var(--m-ink);
+  --card: var(--m-ground-2);
+  --card-foreground: var(--m-ink);
+  --popover: var(--m-ground-3);
+  --popover-foreground: var(--m-ink);
+  --surface: var(--m-ground-2);
+  --surface-hover: var(--m-ground-4);
+  --surface-active: var(--m-ground-5);
+  --surface-selected: var(--m-ground-5);
+  --surface-elevated: var(--m-ground-3);
+  --surface-highlight: rgb(255 255 255 / 0.04);
+  --sidebar: var(--m-ground-2);
+  --sidebar-foreground: var(--m-ink);
+  --secondary: var(--m-ground-5);
+  --secondary-foreground: var(--m-ink);
+  --muted: var(--m-ground-2);
+  --accent: var(--m-ground-4);
+  --accent-foreground: var(--m-ink);
+  --muted-foreground: var(--m-ink-2);
+  --text-secondary: var(--m-ink-2);
+  --text-tertiary: var(--m-ink-3);
+  --text-disabled: var(--m-ink-4);
+  --border: var(--m-line);
+  --border-subtle: var(--m-line-soft);
+  --border-strong: var(--m-line-strong);
+  --input: var(--m-line-strong);
+  --primary: var(--m-ink);
+  --primary-foreground: var(--m-ground);
+  --accent-hover: #d6d7da;
+  --accent-active: #c4c5c9;
+  --accent-subtle: rgb(245 245 245 / 0.06);
+  --accent-text: var(--m-ink);
+  --ring: rgb(245 245 245 / 0.4);
+  --focus: rgb(245 245 245 / 0.4);
+  --overlay: rgb(3 4 5 / 0.72);
 
-  /* ---- Hairlines (foreground at 10 / 5 / 20%) ------------------------- */
-  --border: rgb(38 37 30 / 0.1);
-  --border-subtle: rgb(38 37 30 / 0.05);
-  --border-strong: rgb(38 37 30 / 0.2);
-  --input: rgb(38 37 30 / 0.2);
+  /* Everything the app would colour, restated in grey. */
+  --link: var(--m-ink);
+  --info: #c9cacd;
+  --info-foreground: var(--m-ground);
+  --info-subtle: rgb(245 245 245 / 0.06);
+  --selection: #2a2c33;
+  --selection-foreground: var(--m-ink);
+  --success: #c9cacd;
+  --success-foreground: var(--m-ground);
+  --success-subtle: rgb(245 245 245 / 0.06);
+  --warning: #c9cacd;
+  --warning-foreground: var(--m-ground);
+  --warning-subtle: rgb(245 245 245 / 0.06);
+  --destructive: #e4e4e6;
+  --destructive-foreground: var(--m-ground);
+  --danger: #e4e4e6;
+  --danger-foreground: var(--m-ground);
+  --error: #e4e4e6;
+  --error-subtle: rgb(245 245 245 / 0.06);
+  --kind-conversation: #e6e6e8;
+  --kind-source: #a9abb1;
+  --kind-file: #8a8d94;
+  --kind-note: #c9cacd;
+  --kind-session: #7c8089;
+  --graph-node: #6f727a;
+  --graph-node-selected: var(--m-ink);
+  --graph-edge: #3a3d44;
 
-  /* ---- Fills ---------------------------------------------------------- */
-  --primary: #26251e;
-  --primary-foreground: #f7f7f4;
-  --accent-hover: #3b3a33;
-  --accent-text: #26251e;
-  --ring: rgb(38 37 30 / 0.4);
-  --focus: rgb(38 37 30 / 0.4);
-  /* The one chromatic colour: links and the thing that needs a person.
-     One step deeper than the reference's #f54e00 so it clears AA as text. */
-  --link: #bf3d00;
-  --success: #17775a;
-  --warning: #8a5a0e;
-  --destructive: #bf2a50;
-  --danger: #bf2a50;
-  --error: #bf2a50;
-
-  /* ---- Page-only ------------------------------------------------------ */
-  --m-stage: #e1e0db;
-  --m-window-shadow: 0 28px 70px rgb(0 0 0 / 0.14), 0 14px 32px rgb(0 0 0 / 0.1), 0 0 0 1px rgb(38 37 30 / 0.1);
+  /* ---- Page-only -------------------------------------------------------- */
+  --m-stage: var(--m-ground-4);
+  --m-window: #0a0b0d;
+  --m-window-shadow:
+    0 40px 90px -20px rgb(0 0 0 / 0.8),
+    0 18px 40px -12px rgb(0 0 0 / 0.6),
+    0 0 0 1px var(--m-line),
+    inset 0 1px 0 rgb(255 255 255 / 0.05);
 
   /* ---- Type ----------------------------------------------------------- */
-  /* The display face carries the page; demos inside windows use the
-     platform UI face at product sizes, as the reference's demos do. */
-  --tabdump-font-ui: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --tabdump-font-ui: var(--font-geist-sans), ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
   --tabdump-font-content: var(--font-geist-sans);
   --tabdump-font-mono: var(--font-geist-mono);
   --tabdump-font-scale: 1;
@@ -93,9 +136,16 @@
   --tabdump-density-scale: 1;
   --tabdump-card-density-scale: 1;
   --radius: 0.5rem;
-  --shadow-sm: 0 0 1rem rgb(0 0 0 / 0.03), 0 0 0.5rem rgb(0 0 0 / 0.02);
-  --shadow-md: 0 12px 32px -8px rgb(0 0 0 / 0.16), 0 2px 6px -2px rgb(0 0 0 / 0.08);
+  --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.4);
+  --shadow-md: 0 12px 32px -8px rgb(0 0 0 / 0.6), 0 2px 6px -2px rgb(0 0 0 / 0.4);
   --shadow-lg: var(--m-window-shadow);
+
+  /* ---- Motion --------------------------------------------------------- */
+  /* An expo-out for arrivals, and the system's critically damped spring
+     (globals.css --ease-spring) for things that settle into place. */
+  --m-ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --m-ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+  --m-ease-spring: linear(0, 0.1 4.3%, 0.36 10.7%, 0.68 19.6%, 0.86 27.8%, 0.96 37%, 1.005 47%, 1.01 58%, 1.003 72%, 1);
 
   background-color: var(--background);
   color: var(--foreground);
@@ -103,105 +153,20 @@
   font-size: 16px;
   line-height: 24px;
   letter-spacing: 0.005em;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
   /* A backstop: nothing on the page is meant to be wider than the viewport,
      and if something ever is, the document still never scrolls sideways. */
   overflow-x: clip;
 }
 
-/* Ink polarity. Mirrors the product's Hubble Dark. */
-@media (prefers-color-scheme: dark) {
-  .tabdump-marketing:not([data-scheme="light"]) {
-    color-scheme: dark;
-    --background: #14120b;
-    --background-secondary: #1b1913;
-    --background-tertiary: #201e18;
-    --foreground: #edecec;
-    --card: #1b1913;
-    --card-foreground: #edecec;
-    --popover: #201e18;
-    --popover-foreground: #edecec;
-    --surface: #1b1913;
-    --surface-hover: #201e18;
-    --surface-active: #26241e;
-    --surface-selected: #26241e;
-    --surface-elevated: #201e18;
-    --sidebar: #1b1913;
-    --secondary: #26241e;
-    --secondary-foreground: #edecec;
-    --muted: #1b1913;
-    --accent: #201e18;
-    --accent-foreground: #edecec;
-    --muted-foreground: rgb(237 236 236 / 0.6);
-    --text-secondary: rgb(237 236 236 / 0.6);
-    --text-tertiary: rgb(237 236 236 / 0.4);
-    --text-disabled: rgb(237 236 236 / 0.3);
-    --border: rgb(237 236 236 / 0.1);
-    --border-subtle: rgb(237 236 236 / 0.05);
-    --border-strong: rgb(237 236 236 / 0.2);
-    --input: rgb(237 236 236 / 0.2);
-    --primary: #edecec;
-    --primary-foreground: #14120b;
-    --accent-hover: #d7d6d5;
-    --accent-text: #edecec;
-    --ring: rgb(237 236 236 / 0.4);
-    --focus: rgb(237 236 236 / 0.4);
-    --link: #eb5600;
-    --success: #3fae83;
-    --warning: #d9a441;
-    --destructive: #e5667f;
-    --danger: #e5667f;
-    --error: #e5667f;
-    --m-stage: #2b2923;
-    --m-window-shadow: 0 28px 70px rgb(0 0 0 / 0.4), 0 14px 32px rgb(0 0 0 / 0.3), 0 0 0 1px rgb(237 236 236 / 0.1);
-  }
-}
-.tabdump-marketing[data-scheme="dark"] {
-  color-scheme: dark;
-  --background: #14120b;
-  --background-secondary: #1b1913;
-  --background-tertiary: #201e18;
-  --foreground: #edecec;
-  --card: #1b1913;
-  --card-foreground: #edecec;
-  --popover: #201e18;
-  --popover-foreground: #edecec;
-  --surface: #1b1913;
-  --surface-hover: #201e18;
-  --surface-active: #26241e;
-  --surface-selected: #26241e;
-  --surface-elevated: #201e18;
-  --sidebar: #1b1913;
-  --secondary: #26241e;
-  --secondary-foreground: #edecec;
-  --muted: #1b1913;
-  --accent: #201e18;
-  --accent-foreground: #edecec;
-  --muted-foreground: rgb(237 236 236 / 0.6);
-  --text-secondary: rgb(237 236 236 / 0.6);
-  --text-tertiary: rgb(237 236 236 / 0.4);
-  --text-disabled: rgb(237 236 236 / 0.3);
-  --border: rgb(237 236 236 / 0.1);
-  --border-subtle: rgb(237 236 236 / 0.05);
-  --border-strong: rgb(237 236 236 / 0.2);
-  --input: rgb(237 236 236 / 0.2);
-  --primary: #edecec;
-  --primary-foreground: #14120b;
-  --accent-hover: #d7d6d5;
-  --accent-text: #edecec;
-  --ring: rgb(237 236 236 / 0.4);
-  --focus: rgb(237 236 236 / 0.4);
-  --link: #eb5600;
-  --success: #3fae83;
-  --warning: #d9a441;
-  --destructive: #e5667f;
-  --danger: #e5667f;
-  --error: #e5667f;
-  --m-stage: #2b2923;
-  --m-window-shadow: 0 28px 70px rgb(0 0 0 / 0.4), 0 14px 32px rgb(0 0 0 / 0.3), 0 0 0 1px rgb(237 236 236 / 0.1);
+.tabdump-marketing ::selection {
+  background: rgb(245 245 245 / 0.22);
+  color: var(--m-ink);
 }
 
 /* ---- Page geometry ----------------------------------------------------
-   A 1300px container, 20px gutters, 52px header, 67.2px section rhythm. */
+   A 1300px container, 20px gutters (24px from tablet), 52px header. */
 .tabdump-marketing .m-container {
   width: 100%;
   max-width: var(--hb-container);
@@ -210,29 +175,43 @@
 .tabdump-marketing .m-page {
   padding-inline: var(--hb-gutter);
 }
+@media (min-width: 768px) {
+  .tabdump-marketing .m-page {
+    padding-inline: 1.5rem;
+  }
+}
 .tabdump-marketing .m-section {
-  padding-block: var(--hb-section-y);
+  padding-block: clamp(4.5rem, 3rem + 5vw, 8.5rem);
 }
 
-/* ---- Type ------------------------------------------------------------- */
+/* ---- Type -------------------------------------------------------------
+   The reference's ramp — 400 weight throughout, tracking tightening as the
+   size grows — with the hero and statement set larger, so the page leads
+   with its headline rather than whispering it. */
 .tabdump-marketing .m-hero {
-  font-size: var(--hb-text-26);
-  line-height: 1.25;
-  letter-spacing: var(--hb-tracking-26);
+  font-size: clamp(2.125rem, 1.45rem + 2.05vw, 3.375rem);
+  line-height: 1.06;
+  letter-spacing: -0.034em;
   font-weight: 400;
   text-wrap: balance;
 }
+.tabdump-marketing .m-lede {
+  font-size: clamp(1.0625rem, 1rem + 0.25vw, 1.1875rem);
+  line-height: 1.5;
+  letter-spacing: -0.004em;
+  text-wrap: pretty;
+}
 .tabdump-marketing .m-h2 {
-  font-size: var(--hb-text-36);
-  line-height: 1.2;
-  letter-spacing: var(--hb-tracking-36);
+  font-size: clamp(1.875rem, 1.35rem + 1.6vw, 2.75rem);
+  line-height: 1.1;
+  letter-spacing: -0.03em;
   font-weight: 400;
   text-wrap: balance;
 }
 .tabdump-marketing .m-title {
-  font-size: var(--hb-text-22);
-  line-height: 1.3;
-  letter-spacing: var(--hb-tracking-22);
+  font-size: clamp(1.25rem, 1.08rem + 0.5vw, 1.5rem);
+  line-height: 1.27;
+  letter-spacing: -0.016em;
   font-weight: 400;
   text-wrap: pretty;
 }
@@ -247,70 +226,186 @@
   letter-spacing: var(--hb-tracking-14);
 }
 .tabdump-marketing .m-cta {
-  font-size: var(--hb-text-72);
-  line-height: 1.1;
-  letter-spacing: var(--hb-tracking-72);
+  font-size: clamp(3rem, 1.4rem + 5vw, 5.5rem);
+  line-height: 1;
+  letter-spacing: -0.045em;
   font-weight: 400;
 }
-@media (max-width: 659px) {
-  .tabdump-marketing .m-hero {
-    font-size: 1.375rem;
-  }
-  .tabdump-marketing .m-h2 {
-    font-size: 1.75rem;
-  }
-  .tabdump-marketing .m-title {
-    font-size: 1.1875rem;
-  }
-  .tabdump-marketing .m-cta {
-    font-size: 2.75rem;
-  }
+.tabdump-marketing .m-mono {
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  letter-spacing: 0;
 }
 
 /* ---- Links -------------------------------------------------------------
-   The page's only chromatic text: "Learn about … →". */
+   White, with an arrow that leans forward on hover. */
 .tabdump-marketing .m-link {
-  color: var(--link);
-  transition: opacity 140ms var(--ease-standard);
+  color: var(--m-ink);
+  transition: color 160ms var(--m-ease-out);
 }
 .tabdump-marketing .m-link:hover {
-  opacity: 0.8;
+  color: #ffffff;
+}
+.tabdump-marketing .m-arrow {
+  display: inline-block;
+  transition: transform 260ms var(--m-ease-out);
+}
+.tabdump-marketing .m-link:hover .m-arrow,
+.tabdump-marketing .m-link:focus-visible .m-arrow,
+.tabdump-marketing .m-arrow-host:hover .m-arrow {
+  transform: translateX(3px);
+}
+.tabdump-marketing .m-quiet-link {
+  color: var(--m-ink);
+  transition: opacity 160ms var(--m-ease-out);
+}
+.tabdump-marketing .m-quiet-link:hover {
+  opacity: 0.62;
 }
 
-/* ---- The product, live -------------------------------------------------
-   `.m-app` is a live Hubble on the page: the demo window and the sibling its
-   overlays portal into (see memory-illustrations.tsx). Its design tokens are the
-   app's own Hubble Light / Hubble Dark, emitted by app-theme.tsx from
-   the app's resolver; this block only restores the app's base type, which
-   the page's display-face defaults would otherwise leak into it. */
+/* ---- Header -----------------------------------------------------------
+   The page ground, slightly translucent; a hairline fades in once the page
+   has scrolled (a scroll-driven animation, so no script listens to scroll). */
+.tabdump-marketing .m-header {
+  background: rgb(8 9 11 / 0.82);
+  -webkit-backdrop-filter: saturate(140%) blur(14px);
+  backdrop-filter: saturate(140%) blur(14px);
+  box-shadow: 0 1px 0 transparent;
+}
+@supports (animation-timeline: scroll()) {
+  .tabdump-marketing .m-header {
+    animation: m-header-rule linear both;
+    animation-timeline: scroll(root block);
+    animation-range: 0 80px;
+  }
+}
+@keyframes m-header-rule {
+  to {
+    box-shadow: 0 1px 0 var(--m-line-soft);
+  }
+}
+
+/* The phone menu: the whole screen under the header, its links large. */
+.tabdump-marketing .m-sheet {
+  position: fixed;
+  inset: var(--hb-header-h) 0 0 0;
+  z-index: var(--hb-z-overlay);
+  background: var(--m-ground);
+  overflow-y: auto;
+  opacity: 0;
+  visibility: hidden;
+  transition:
+    opacity 240ms var(--m-ease-out),
+    visibility 0s linear 240ms;
+}
+.tabdump-marketing .m-sheet[data-open="true"] {
+  opacity: 1;
+  visibility: visible;
+  transition:
+    opacity 240ms var(--m-ease-out),
+    visibility 0s;
+}
+.tabdump-marketing .m-sheet-item {
+  opacity: 0;
+  transform: translateY(10px);
+  transition:
+    opacity 420ms var(--m-ease-out),
+    transform 520ms var(--m-ease-out);
+  transition-delay: calc(var(--m-step, 0) * 40ms);
+}
+.tabdump-marketing .m-sheet[data-open="true"] .m-sheet-item {
+  opacity: 1;
+  transform: none;
+}
+
+/* ---- Cards and stages ---------------------------------------------------
+   A feature card is one step above the ground with a 4px corner; the stage
+   a window rests on is a step above that, with a faint grain so the plane
+   reads as a surface rather than a flat fill. */
+.tabdump-marketing .m-card {
+  border-radius: 4px;
+  background: var(--card);
+}
+.tabdump-marketing .m-stage {
+  position: relative;
+  border-radius: 4px;
+  background-color: var(--m-stage);
+  overflow: hidden;
+  isolation: isolate;
+}
+.tabdump-marketing .m-stage::before {
+  /* Grain: a tiled noise image, 3% white. Not a gradient — texture. */
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  opacity: 0.55;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 0.05 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  pointer-events: none;
+}
+.tabdump-marketing .m-stage-hero {
+  background-color: var(--m-ground-3);
+}
+
+/* A tile in the "works with" row and the ecosystem cards: a tonal step on
+   hover, no lift, no shadow. */
+.tabdump-marketing .m-tile {
+  border-radius: 4px;
+  background: var(--card);
+  transition: background-color 220ms var(--m-ease-out);
+}
+.tabdump-marketing .m-tile:hover,
+.tabdump-marketing .m-tile:focus-within {
+  background: var(--m-ground-3);
+}
+
+/* ---- The product, drawn -------------------------------------------------
+   `.m-app` is a Hubble window on the page. It restores the product's base
+   type, which the page's display defaults would otherwise leak into it. */
 .tabdump-marketing .m-app {
   font-family: var(--tabdump-font-ui);
-  font-size: 16px;
+  font-size: 13px;
   line-height: 1.5;
   letter-spacing: normal;
   text-align: left;
   color: var(--foreground);
 }
 
-/* A window: a 10px corner, the long two-stage shadow with a hairline ring,
-   and its own stacking layer so the app's sticky bars and drawers never
-   paint over the page header scrolling past it. */
-.tabdump-marketing .m-demo-window {
+/* A window: a 10px corner, a long two-stage shadow with a hairline ring and
+   a lit top edge, and its own stacking layer. */
+.tabdump-marketing .m-window {
   position: relative;
   isolation: isolate;
   display: flex;
+  flex-direction: column;
   overflow: hidden;
   border-radius: 10px;
-  background: var(--background);
+  background: var(--m-window);
   box-shadow: var(--m-window-shadow);
 }
+.tabdump-marketing .m-window-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 34px;
+  flex-shrink: 0;
+  padding-inline: 12px;
+  border-bottom: 1px solid var(--m-line-soft);
+  color: var(--m-ink-3);
+  font-size: 12px;
+}
+.tabdump-marketing .m-window-dots {
+  display: flex;
+  gap: 6px;
+}
+.tabdump-marketing .m-window-dots > span {
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  background: var(--m-ground-5);
+}
 
-/* Where a window's overlays portal to: a fixed, empty layer at the viewport's
-   corner. In the app the page never scrolls, so a popover focused a frame
-   before it is positioned is already in view; on this page it would sit at
-   the portal's place in the flow, below the window, and focusing it scrolled
-   the visitor there. Fixed, it is always in view — focus moves nothing — and
-   the positioner places popovers against it exactly as before. */
+/* Where any overlay inside a window portals to: a fixed, empty layer at the
+   viewport's corner, so focusing one never scrolls the page. */
 .tabdump-marketing .m-demo-portal {
   position: fixed;
   top: 0;
@@ -321,65 +416,308 @@
 }
 
 /* In the app a destination fills the viewport (h-screen). In a window, the
-   window is the viewport, so viewport-high views fill the window instead of
-   running past its bottom edge and taking their scroll areas with them. */
-.tabdump-marketing .m-demo-window .h-screen {
+   window is the viewport. */
+.tabdump-marketing .m-window .h-screen {
   height: 100%;
 }
-.tabdump-marketing .m-demo-window .max-h-screen {
+.tabdump-marketing .m-window .max-h-screen {
   max-height: 100%;
 }
-.tabdump-marketing .m-demo-window .min-h-screen {
+.tabdump-marketing .m-window .min-h-screen {
   min-height: 100%;
 }
 
-/* The flat tonal plane a window rests on. The reference hangs its windows
-   on a painting; Hubble keeps the plane quiet and lets the product be the
-   picture. It does not clip: a window's menus may reach past its edge. */
-.tabdump-marketing .m-stage {
+/* ---- Demo motion ----------------------------------------------------------
+   Every state change inside a window is a transition on a data attribute
+   the demo's timeline writes — never a remount — so a step that arrives
+   settles in, and a step that leaves eases out. */
+.tabdump-marketing .m-fx {
+  transition:
+    opacity 520ms var(--m-ease-out),
+    transform 640ms var(--m-ease-spring),
+    filter 520ms var(--m-ease-out);
+}
+.tabdump-marketing .m-fx[data-on="false"] {
+  opacity: 0;
+  transform: translateY(8px) scale(0.985);
+  filter: blur(3px);
+  pointer-events: none;
+}
+.tabdump-marketing .m-fx-left[data-on="false"] {
+  transform: translateX(-14px);
+}
+.tabdump-marketing .m-fx-fade[data-on="false"] {
+  transform: none;
+  filter: none;
+}
+/* Collapsing rows: a grid row from 0fr to 1fr, so the list below slides
+   rather than jumps when a new item lands. */
+.tabdump-marketing .m-grow {
+  display: grid;
+  grid-template-rows: 1fr;
+  transition:
+    grid-template-rows 620ms var(--m-ease-out),
+    opacity 520ms var(--m-ease-out);
+}
+.tabdump-marketing .m-grow > * {
+  min-height: 0;
+  overflow: hidden;
+}
+.tabdump-marketing .m-grow[data-on="false"] {
+  grid-template-rows: 0fr;
+  opacity: 0;
+}
+.tabdump-marketing .m-glow {
+  transition:
+    background-color 420ms var(--m-ease-out),
+    border-color 420ms var(--m-ease-out),
+    color 420ms var(--m-ease-out);
+}
+
+/* Something new in a window (a result list for a new query, a new target
+   app) rises in on mount. */
+@media (prefers-reduced-motion: no-preference) {
+  .tabdump-marketing .m-rise {
+    animation: m-rise 640ms var(--m-ease-out) both;
+    animation-delay: var(--m-delay, 0ms);
+  }
+}
+@keyframes m-rise {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+    filter: blur(3px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+    filter: none;
+  }
+}
+
+/* The loop band: a light moves along the five steps, one at a time, so the
+   section shows work travelling through the loop without a script. */
+.tabdump-marketing .m-loop-step {
+  transition: background-color 400ms var(--m-ease-out);
+}
+@media (prefers-reduced-motion: no-preference) {
+  .tabdump-marketing .m-loop-step {
+    animation: m-loop-step 10s var(--m-ease-in-out) infinite;
+    animation-delay: calc(var(--m-step, 0) * 2s);
+  }
+  .tabdump-marketing .m-loop-step .m-loop-dot {
+    animation: m-loop-dot 10s var(--m-ease-in-out) infinite;
+    animation-delay: calc(var(--m-step, 0) * 2s);
+  }
+  .tabdump-marketing .m-loop-runner {
+    animation: m-loop-runner 10s linear infinite;
+  }
+}
+@keyframes m-loop-step {
+  0%,
+  22% {
+    background-color: var(--m-ground-3);
+  }
+  6%,
+  16% {
+    background-color: var(--m-ground-4);
+  }
+  30%,
+  100% {
+    background-color: var(--card);
+  }
+}
+@keyframes m-loop-dot {
+  0%,
+  20% {
+    background-color: var(--m-ink);
+    box-shadow: 0 0 0 4px rgb(245 245 245 / 0.08);
+  }
+  28%,
+  100% {
+    background-color: var(--m-ink-4);
+    box-shadow: 0 0 0 0 transparent;
+  }
+}
+@keyframes m-loop-runner {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(500%);
+  }
+}
+
+/* "Working" text: a slow sweep of light across the words, as an agent's
+   status line does in the app's own activity rows. */
+.tabdump-marketing .m-shimmer {
+  background: linear-gradient(90deg, var(--m-ink-3) 0%, var(--m-ink-3) 40%, var(--m-ink) 50%, var(--m-ink-3) 60%, var(--m-ink-3) 100%);
+  background-size: 250% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: m-shimmer 1.8s linear infinite;
+}
+@keyframes m-shimmer {
+  from {
+    background-position: 100% 0;
+  }
+  to {
+    background-position: -150% 0;
+  }
+}
+.tabdump-marketing .m-caret {
+  display: inline-block;
+  width: 1px;
+  height: 1.1em;
+  margin-left: 1px;
+  vertical-align: -0.18em;
+  background: var(--m-ink);
+  animation: m-caret 1s steps(1) infinite;
+}
+@keyframes m-caret {
+  50% {
+    opacity: 0;
+  }
+}
+.tabdump-marketing .m-spin {
+  animation: m-spin 1.1s linear infinite;
+}
+@keyframes m-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* The loop rail under the hero window: each chapter's bar fills while it
+   plays (the timeline writes --m-progress), the finished ones stay full. */
+.tabdump-marketing .m-rail-bar {
   position: relative;
-  border-radius: 4px;
-  background: var(--m-stage);
+  height: 2px;
+  border-radius: 2px;
+  background: var(--m-line);
+  overflow: hidden;
+}
+.tabdump-marketing .m-rail-bar > span {
+  position: absolute;
+  inset: 0;
+  transform-origin: left center;
+  transform: scaleX(var(--m-progress, 0));
+  background: var(--m-ink);
 }
 
-/* A feature card: the card tone, a 4px corner, 17.5px inner inset. */
-.tabdump-marketing .m-card {
-  border-radius: 4px;
-  background: var(--card);
+@keyframes m-fill {
+  from {
+    transform: scaleX(var(--m-from, 0));
+  }
+  to {
+    transform: scaleX(var(--m-to, 1));
+  }
 }
 
-/* Hover for linked cards (changelog, integrations) is a one-step tonal
-   change — no lift, no shadow. */
-.tabdump-marketing .m-card-link {
-  transition: background-color 140ms cubic-bezier(0.4, 0, 0.2, 1);
+/* The hero's two windows — Hubble and the AI app — trade places as the loop
+   moves between them: the one in front is crisp, the other steps back and
+   dims. On a phone there is room for one, so they cross-fade instead. */
+.tabdump-marketing .m-hero-window {
+  position: relative;
+  transition:
+    transform 900ms var(--m-ease-spring),
+    filter 700ms var(--m-ease-out),
+    opacity 600ms var(--m-ease-out);
 }
-.tabdump-marketing .m-card-link:hover {
-  background: var(--surface-hover);
+.tabdump-marketing .m-hero-window[data-front="true"] {
+  z-index: 2;
+}
+.tabdump-marketing .m-hero-window[data-front="false"] {
+  z-index: 1;
+  transform: translateY(12px) scale(0.975);
+  filter: brightness(0.5);
+}
+@media (max-width: 767px) {
+  .tabdump-marketing .m-hero-window[data-front="false"] {
+    opacity: 0;
+    visibility: hidden;
+    transition:
+      transform 900ms var(--m-ease-spring),
+      filter 700ms var(--m-ease-out),
+      opacity 600ms var(--m-ease-out),
+      visibility 0s linear 600ms;
+  }
 }
 
-/* ---- Scroll reveal ------------------------------------------------------
+/* Connector lines in the reconstruction demo draw themselves in. */
+.tabdump-marketing .m-draw {
+  stroke-dasharray: 1;
+  stroke-dashoffset: 1;
+  transition: stroke-dashoffset 900ms var(--m-ease-in-out), opacity 400ms var(--m-ease-out);
+}
+.tabdump-marketing .m-draw[data-on="true"] {
+  stroke-dashoffset: 0;
+}
+
+/* ---- Hero entrance --------------------------------------------------------
+   On first paint the headline, sentence and actions rise into place one
+   step apart, and the stage settles in under them. Pure CSS, so it runs
+   before hydration, and the end state sets no transform. */
+@media (prefers-reduced-motion: no-preference) {
+  .tabdump-marketing .m-intro {
+    animation: m-intro 1000ms var(--m-ease-out) both;
+    animation-delay: calc(80ms + var(--m-step, 0) * 90ms);
+  }
+  .tabdump-marketing .m-intro-stage {
+    animation: m-intro-stage 1400ms var(--m-ease-out) both;
+    animation-delay: 380ms;
+  }
+}
+@keyframes m-intro {
+  from {
+    opacity: 0;
+    transform: translateY(16px);
+    filter: blur(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+    filter: none;
+  }
+}
+@keyframes m-intro-stage {
+  from {
+    opacity: 0;
+    transform: translateY(40px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* ---- Scroll reveal --------------------------------------------------------
    A section below the fold rises into place the first time the visitor
-   reaches it (see reveal.tsx): its items fade in and travel up 24px, one
-   80ms step apart. Only a section the script has marked `pending` is ever
-   hidden, so without script, observer or motion, the page is simply there.
+   reaches it (see reveal.tsx): its items fade in and travel up, one step
+   apart. Only a section the script has marked `pending` is ever hidden, so
+   without script, observer or motion, the page is simply there.
 
    The revealed state sets no transform at all rather than translateY(0):
    any transform makes an element the containing block for fixed-position
-   descendants, and the live windows position their tooltips `fixed` at
-   viewport coordinates. */
+   descendants. */
 .tabdump-marketing {
-  --m-reveal-duration: 700ms;
-  --m-reveal-stagger: 80ms;
-  --m-reveal-ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --m-reveal-duration: 1100ms;
+  --m-reveal-stagger: 90ms;
+  --m-reveal-ease: cubic-bezier(0.16, 1, 0.3, 1);
 }
 .tabdump-marketing .m-reveal[data-reveal="pending"] .m-reveal-item {
   opacity: 0;
-  transform: translateY(24px);
+  transform: translateY(32px);
+}
+.tabdump-marketing .m-reveal[data-reveal="pending"] .m-reveal-item.m-reveal-text {
+  filter: blur(5px);
 }
 .tabdump-marketing .m-reveal[data-reveal="revealed"] .m-reveal-item {
   transition:
     opacity var(--m-reveal-duration) var(--m-reveal-ease),
-    transform var(--m-reveal-duration) var(--m-reveal-ease);
+    transform calc(var(--m-reveal-duration) * 1.15) var(--m-reveal-ease),
+    filter var(--m-reveal-duration) var(--m-reveal-ease);
   transition-delay: calc(var(--m-reveal-step, 0) * var(--m-reveal-stagger));
 }
 /* Keyboard focus never lands on something invisible: tabbing into a section
@@ -387,19 +725,82 @@
 .tabdump-marketing .m-reveal[data-reveal="pending"]:focus-within .m-reveal-item {
   opacity: 1;
   transform: none;
+  filter: none;
 }
+
+/* ---- Parallax -------------------------------------------------------------
+   A window drifts a little slower than the page as it crosses the viewport,
+   and settles from a slightly smaller scale as it enters. Scroll-driven
+   animations only: no scroll listener, nothing on browsers without them. */
+@supports (animation-timeline: view()) {
+  @media (prefers-reduced-motion: no-preference) {
+    .tabdump-marketing .m-parallax {
+      animation: m-parallax linear both;
+      animation-timeline: view();
+      animation-range: cover 0% cover 100%;
+    }
+    .tabdump-marketing .m-settle {
+      animation: m-settle linear both;
+      animation-timeline: view();
+      animation-range: entry 0% cover 45%;
+    }
+  }
+}
+@keyframes m-parallax {
+  from {
+    translate: 0 var(--m-parallax, 28px);
+  }
+  to {
+    translate: 0 calc(var(--m-parallax, 28px) * -1);
+  }
+}
+@keyframes m-settle {
+  from {
+    scale: 0.955;
+    opacity: 0.4;
+  }
+  to {
+    scale: 1;
+    opacity: 1;
+  }
+}
+
+/* ---- Reduced motion ------------------------------------------------------- */
 @media (prefers-reduced-motion: reduce), print {
   .tabdump-marketing .m-reveal .m-reveal-item {
     opacity: 1 !important;
     transform: none !important;
     transition: none !important;
+    filter: none !important;
+  }
+  .tabdump-marketing .m-fx,
+  .tabdump-marketing .m-grow,
+  .tabdump-marketing .m-glow,
+  .tabdump-marketing .m-draw,
+  .tabdump-marketing .m-sheet,
+  .tabdump-marketing .m-sheet-item,
+  .tabdump-marketing .m-arrow,
+  .tabdump-marketing .m-hero-window,
+  .tabdump-marketing .m-rail-bar > span {
+    transition: none !important;
+  }
+  .tabdump-marketing .m-shimmer {
+    animation: none;
+    background: none;
+    color: var(--m-ink-3);
+  }
+  .tabdump-marketing .m-caret,
+  .tabdump-marketing .m-spin,
+  .tabdump-marketing .m-loop-step,
+  .tabdump-marketing .m-loop-dot,
+  .tabdump-marketing .m-loop-runner {
+    animation: none;
   }
 }
 
-/* On a phone a window needs every pixel of the width: the hero's stage and
-   the feature cards run to the screen edges instead of sitting inside the
-   page gutter, so the product inside is laid out at phone width. Last in the
-   file so it wins over the card and stage corners above. */
+/* On a phone a window needs every pixel of the width: stages and feature
+   cards run to the screen edges instead of sitting inside the gutter. Last
+   in the file so it wins over the corners above. */
 @media (max-width: 639px) {
   .tabdump-marketing .m-bleed {
     margin-inline: calc(var(--hb-gutter) * -1);

@@ -6,9 +6,8 @@ import { Button } from "@/components/ui/button"
 import { saveTextFile } from "@/lib/platform"
 import { exportBrowserProjects, findBrowserProjects, type BrowserProjects } from "@/lib/web-migration/browser-data"
 import type { ReleaseView } from "@/lib/desktop/artifacts"
-import { AppThemeStyle } from "./app-theme"
 import { DownloadCta, ReleaseLine } from "./download-cta"
-import { CHROME_SECTION_HREF, Container, SiteFooter, SiteHeader, useMarketingScheme } from "./site"
+import { CHROME_SECTION_HREF, Container, SiteFooter, SiteHeader } from "./site"
 import { getExtensionInstallInfo } from "@/lib/extension-config"
 
 const ROOT_ID = "hubble-move"
@@ -25,7 +24,6 @@ type Saved = { state: "idle" } | { state: "busy" } | { state: "saved"; projects:
  */
 export function MovePage({ release }: { release: ReleaseView | null }) {
   const install = getExtensionInstallInfo()
-  const [scheme, setScheme] = useMarketingScheme(ROOT_ID)
   const [found, setFound] = useState<BrowserProjects[] | null>(null)
   const [saved, setSaved] = useState<Record<string, Saved>>({})
 
@@ -50,7 +48,6 @@ export function MovePage({ release }: { release: ReleaseView | null }) {
 
   return (
     <div id={ROOT_ID} className="tabdump-marketing min-h-screen">
-      <AppThemeStyle />
       <SiteHeader install={install.mode === "store" ? { label: "Hubble for Chrome", href: install.url } : { label: "Hubble for Chrome", href: CHROME_SECTION_HREF }} />
       <main>
         <section className="m-page pt-12 pb-[calc(var(--hb-v)*2)] sm:pt-(--hb-hero-top)">
@@ -134,7 +131,7 @@ export function MovePage({ release }: { release: ReleaseView | null }) {
           </Container>
         </section>
       </main>
-      <SiteFooter scheme={scheme} onScheme={setScheme} />
+      <SiteFooter />
     </div>
   )
 }

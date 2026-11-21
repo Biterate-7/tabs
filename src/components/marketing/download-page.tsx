@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, type ReactNode } from "react"
+import { useState, type CSSProperties, type ReactNode } from "react"
 import { Download } from "lucide-react"
 import { buttonVariants } from "@/components/ui/button"
 import { EXTENSION_INSTALL_STEPS } from "@/components/extension-install-guide"
@@ -9,9 +9,8 @@ import { ARCH_LABEL, FORMAT_LABEL, artifactHref, artifactsFor, type DesktopArtif
 import { DESKTOP_OSES, DESKTOP_OS_LABEL, formatInstallerSize, type DesktopOs } from "@/lib/desktop/release"
 import { EXTENSION_DOWNLOAD_URL, getExtensionInstallInfo } from "@/lib/extension-config"
 import { cn } from "@/lib/utils"
-import { AppThemeStyle } from "./app-theme"
 import { DownloadCta, ReleaseLine, SYSTEM_REQUIREMENTS, availablePlatforms, useVisitorOs } from "./download-cta"
-import { CHROME_SECTION_HREF, Container, MoreLink, SiteFooter, SiteHeader, useMarketingScheme, type PrimaryAction } from "./site"
+import { CHROME_SECTION_HREF, Container, MoreLink, SiteFooter, SiteHeader, type PrimaryAction } from "./site"
 
 const ROOT_ID = "hubble-download"
 
@@ -54,7 +53,6 @@ const INSTALL_STEPS: Record<DesktopOs, ReactNode[]> = {
  */
 export function DownloadPage({ release }: { release: ReleaseView | null }) {
   const install = getExtensionInstallInfo()
-  const [scheme, setScheme] = useMarketingScheme(ROOT_ID)
   const inDesktopApp = useIsDesktop()
   const visitor = useVisitorOs()
   const [started, setStarted] = useState(false)
@@ -63,19 +61,22 @@ export function DownloadPage({ release }: { release: ReleaseView | null }) {
 
   return (
     <div id={ROOT_ID} className="tabdump-marketing min-h-screen">
-      <AppThemeStyle />
       <SiteHeader install={installAction} />
 
       <main>
         {/* ---- Hero -------------------------------------------------------- */}
         <section className="m-page pt-12 pb-[calc(var(--hb-v)*2)] sm:pt-(--hb-hero-top)">
           <Container className="flex flex-col items-center text-center">
-            <p className="m-small text-muted-foreground">Download</p>
-            <h1 className="m-hero mt-3 max-w-[720px] text-foreground">Hubble for your computer.</h1>
-            <p className="m-body mt-4 max-w-[560px] text-muted-foreground">
+            <p className="m-small m-intro text-muted-foreground" style={step(0)}>
+              Download
+            </p>
+            <h1 className="m-hero m-intro mt-4 max-w-[760px] text-foreground" style={step(1)}>
+              Hubble for your computer.
+            </h1>
+            <p className="m-lede m-intro mt-5 max-w-[560px] text-muted-foreground" style={step(2)}>
               The Hubble app keeps your projects, AI conversations and notes on your computer. Add Hubble for Chrome to save from your browser.
             </p>
-            <div className="mt-8 flex w-full flex-col items-center">
+            <div className="m-intro mt-8 flex w-full flex-col items-center" style={step(3)}>
               {inDesktopApp ? (
                 <p role="status" className="m-body text-foreground">
                   You&rsquo;re using Hubble Desktop.
@@ -242,7 +243,7 @@ export function DownloadPage({ release }: { release: ReleaseView | null }) {
         </section>
       </main>
 
-      <SiteFooter scheme={scheme} onScheme={setScheme} />
+      <SiteFooter />
     </div>
   )
 }
@@ -316,4 +317,9 @@ export function ReleaseNotes({ notes }: { notes: string }) {
   }
   flush()
   return <div className="flex flex-col gap-2">{blocks}</div>
+}
+
+/** Where an element falls in the hero's entrance, from 0. */
+function step(index: number): CSSProperties {
+  return { "--m-step": index } as CSSProperties
 }

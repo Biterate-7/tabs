@@ -99,7 +99,7 @@ export const metadata: Metadata = {
   metadataBase: new URL(siteOrigin()),
   title: "Hubble",
   description:
-    "One connected workspace for everything you learn and create with AI.",
+    "The control layer for your work with AI: conversations, research and context in one workspace on your device.",
 };
 
 // A minimal, best-effort core-palette lookup so the pre-hydration inline

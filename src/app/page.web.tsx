@@ -4,7 +4,7 @@ import { releaseView } from "@/lib/desktop/artifacts"
 import { getLatestDesktopRelease } from "@/lib/desktop/release-source"
 import { siteUrl } from "@/lib/site-url"
 
-const TITLE = "Hubble — the desktop app for everything you learn with AI"
+const TITLE = "Hubble — the control layer for your work with AI"
 const DESCRIPTION =
   "Hubble is a desktop app that keeps your conversations from ChatGPT, Claude, Gemini and Perplexity in projects with the pages and notes behind them — on your computer, searchable, ready for your next AI chat."
 
