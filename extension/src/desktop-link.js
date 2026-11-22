@@ -61,6 +61,8 @@ export const DESKTOP_COMMAND_ACTIONS = Object.freeze([
   "forget_context_activity",
   "clear_context_activity",
   "capture_context_conversation",
+  "read_youtube_transcript",
+  "request_youtube_access",
 ]);
 
 /** History and tab lists can be large; Hubble takes up to 8 MB per answer. */

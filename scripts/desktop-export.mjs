@@ -12,6 +12,16 @@
 //      extension/ into public/hubble-extension.zip) still runs. Skipping
 //      it would ship a desktop bundle whose extension-download link 404s.
 //
+//   3. It builds with webpack, not Turbopack. Google Fonts sometimes serves
+//      a family's files as `fonts.gstatic.com/l/font?kit=…&skey=…`, and
+//      Turbopack's next/font can't turn an address with its own query into
+//      an import ("next/font/google queries have exactly one entry") — it
+//      failed the macOS installer build on 2026-11-22 for Merriweather
+//      (src/app/layout.tsx) while the same commit built on Windows and Linux.
+//      webpack's next/font downloads any address, so the export no longer
+//      depends on which form Google happens to answer with. The website's
+//      own build (Vercel) is unchanged.
+//
 // next.config.ts reads TABDUMP_BUILD_TARGET and switches to
 // `output: "export"` — see the comment there for why that is sound for this
 // particular app.
@@ -37,7 +47,7 @@ const MISPLACED_EXPORT = [
   'branch sets output: "export" and does NOT override distDir.',
 ].join("\n");
 
-const child = spawn("npm", ["run", "build"], {
+const child = spawn("npm", ["run", "build", "--", "--webpack"], {
   cwd: ROOT,
   stdio: "inherit",
   env: { ...process.env, TABDUMP_BUILD_TARGET: "desktop" },

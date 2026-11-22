@@ -179,9 +179,19 @@ describe("records saved before transcripts", () => {
     expect(shouldProcess(upgraded)).toBe(true);
   });
 
-  it("its next answer replaces the old words, so it is not asked again on every load", () => {
-    const answered = { ...legacy, error: EXTRACTION_ERRORS.transcripts_off };
-    expect(readTabResource(answered)).toMatchObject({ status: "partial", error: EXTRACTION_ERRORS.transcripts_off });
+  it("a video saved while only a paid reader service could get transcripts is asked once more, now through Chrome", () => {
+    const off = readTabResource({ ...legacy, error: EXTRACTION_ERRORS.transcripts_off });
+    expect(off).toMatchObject({ status: "pending", attempts: 0 });
+    expect(off?.error).toBeUndefined();
+  });
+
+  it.each([
+    ["no transcript on YouTube", EXTRACTION_ERRORS.transcript_unavailable],
+    ["video gone", EXTRACTION_ERRORS.video_unavailable],
+    ["waiting for Hubble for Chrome", EXTRACTION_ERRORS.transcript_needs_extension],
+    ["waiting for youtube.com access", EXTRACTION_ERRORS.transcript_needs_access],
+  ])("its next answer (%s) replaces the old words, so it is not asked again on every load", (_, error) => {
+    expect(readTabResource({ ...legacy, error })).toMatchObject({ status: "partial", error });
   });
 
   it("a video with a transcript the person added is left alone", () => {

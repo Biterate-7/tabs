@@ -116,6 +116,10 @@ export type ResourceErrorCode =
   | "transcript_unavailable"
   /** An AI conversation known only by its address: its text has to be saved from the page or pasted. */
   | "needs_capture"
+  /** A video whose transcript is read through Hubble for Chrome, and none answered (or it predates transcripts). */
+  | "needs_extension"
+  /** A video whose transcript Hubble for Chrome may read once the person allows it youtube.com. */
+  | "needs_access"
   | "timeout"
   | "offline"
   | "interrupted";

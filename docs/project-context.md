@@ -221,12 +221,23 @@ one source per request:
   title/author. Behind a login or 403 → `pdf_needs_file`; *Upload PDF* reads
   the file **in the browser** (it never leaves the device). A scan with no text
   layer says so.
-- **YouTube:** the public oEmbed endpoint for title and channel, and — in the
-  same round trip — the video's **existing captions** from a transcript
-  provider (`server/transcripts.ts`), when the server has `SUPADATA_API_KEY`.
-  YouTube's own captions API only serves a video's owner, and Hubble does not
-  scrape watch pages or get past YouTube's bot checks itself, so without a
-  key a video is saved `partial` with "Automatic transcripts aren't set up".
+- **YouTube:** the public oEmbed endpoint for title and channel, and the
+  video's **transcript as YouTube shows it**, read from YouTube's own page in
+  the person's Chrome by Hubble for Chrome (`extension/src/youtube-transcript.js`,
+  asked over the paired link by `youtube-browser.ts` whenever the reader brought
+  none). YouTube's captions API only serves a video's owner, its caption files
+  need a bot-check token, and its transcript service is private — Hubble does
+  none of those. The extension opens the description's *Show transcript* panel
+  in a tab already showing the video, or (with the optional www.youtube.com
+  permission, asked once in its own window) in a muted background tab it opens,
+  reads the rendered lines with their times, and closes it; only the video id
+  travels. Outcomes: ready; "no transcript" / "video unavailable" (YouTube says
+  so — not retried); "connect / open / update Hubble for Chrome" and "allow
+  youtube.com" (`needs_extension` / `needs_access` — asked again when the
+  extension connects or shows it is awake, and after Allow); timeouts and read
+  failures (Try again). A read only wakes Chrome for something the person just
+  did (`RECENT_ACTION_MS`). Optionally, a server with `SUPADATA_API_KEY` asks
+  that provider (`server/transcripts.ts`) first, in the oEmbed round trip.
   `mode=native` only: never speech recognition, never the audio. Only the
   watch URL rebuilt from the validated 11-character id is sent, to one fixed
   host, redirects refused; answers ≤ 8 MB, 20 s timeout; found transcripts
@@ -237,8 +248,8 @@ one source per request:
   add a transcript themselves (paste from YouTube's *Show transcript*, or a
   .vtt/.srt/.txt file); it is parsed with timestamps and labelled `supplied`.
   Never fabricated: an empty or malformed answer is never `ready`. Videos saved
-  before this (with the old "Transcript isn't available" words) are read once
-  more on load (`read.ts`).
+  before this (with the old "Transcript isn't available" or "Automatic
+  transcripts aren't set up" words) are read once more on load (`read.ts`).
 - **Transcripts** are `TranscriptSegment[]` (`start`, `end` in seconds, `text`)
   in playback order, plus `transcriptInfo` (`captions`|`supplied`, language,
   provider); the tab's summary gains `language`. All fields optional, so stored

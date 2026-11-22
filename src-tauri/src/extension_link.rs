@@ -122,9 +122,12 @@ pub const LINK_NUDGE_EVENT: &str = "hubble-link:nudge";
 
 /// What Hubble may ask the paired extension — the browser commands of
 /// src/lib/browser/protocol.ts that Hubble Desktop uses, and nothing else.
-/// Mirrors `DESKTOP_COMMAND_ACTIONS` in extension/src/browser-commands.js,
-/// which validates every argument again before Chrome is touched.
-pub const LINK_COMMAND_ACTIONS: [&str; 13] = [
+/// Mirrors `DESKTOP_COMMAND_ACTIONS` in extension/src/desktop-link.js; every
+/// argument is validated again (extension/src/browser-commands.js) before
+/// Chrome is touched. The last two read a saved video's transcript from
+/// YouTube's own page (extension/src/youtube-transcript.js) and ask the person
+/// to let the extension do that.
+pub const LINK_COMMAND_ACTIONS: [&str; 15] = [
     "list_browser_tabs",
     "list_browser_windows",
     "get_history",
@@ -138,6 +141,8 @@ pub const LINK_COMMAND_ACTIONS: [&str; 13] = [
     "forget_context_activity",
     "clear_context_activity",
     "capture_context_conversation",
+    "read_youtube_transcript",
+    "request_youtube_access",
 ];
 /// The longest a command may wait for the extension (a History Dump scan, a permission prompt).
 pub const MAX_COMMAND_TTL: Duration = Duration::from_secs(120);

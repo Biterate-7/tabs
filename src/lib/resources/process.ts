@@ -2,7 +2,10 @@ import { publicApiUrl } from "@/lib/platform/api-base";
 import { CONVERSATION_NEEDS_CAPTURE, EXTRACTION_ERRORS, isExtractionResponse } from "./extraction";
 import { extractPdfText, PdfUnreadableError } from "./pdf";
 import { cleanLanguageTag, normalizeTranscript, parseTranscript } from "./transcript";
+import { youtubeVideoId } from "./detect";
+import { youtubeMomentUrl } from "./youtube";
 import type { ExtractionRequest, ExtractionResponse } from "./extraction";
+import type { BrowserTranscript, BrowserTranscriptFailure, BrowserTranscriptRequest } from "./youtube-browser";
 import type { Tab } from "@/lib/tabs/types";
 import type { ResourceContent, ResourceContentSummary, ResourceError, ResourceMeta, TabResource } from "./types";
 
@@ -27,7 +30,15 @@ export type ProcessDeps = {
   now: () => number;
   /** The reader's preferred transcript language — the browser's, when it says. */
   language?: () => string | undefined;
+  /**
+   * A YouTube video's transcript from YouTube's own page, through Hubble for
+   * Chrome (youtube-browser.ts) — asked when the reader had none.
+   */
+  readTranscript?: (request: BrowserTranscriptRequest) => Promise<BrowserTranscript>;
 };
+
+/** A source added or retried this recently was the person's own doing: reading it may wake Chrome's extension. */
+export const RECENT_ACTION_MS = 2 * 60_000;
 
 /** The browser's language, as a hint for which captions to prefer. */
 export function browserLanguage(): string | undefined {
@@ -90,6 +101,69 @@ export function httpExtractor(endpoint: string): ProcessDeps["extract"] {
   };
 }
 
+/** What a video says when Hubble for Chrome couldn't read its transcript from YouTube. */
+export function browserTranscriptError(reason: BrowserTranscriptFailure): ResourceError {
+  switch (reason) {
+    case "no_transcript":
+      return EXTRACTION_ERRORS.transcript_unavailable;
+    case "video_unavailable":
+      return EXTRACTION_ERRORS.video_unavailable;
+    case "no_access":
+      return EXTRACTION_ERRORS.transcript_needs_access;
+    case "no_extension":
+      return EXTRACTION_ERRORS.transcript_needs_extension;
+    case "no_answer":
+      return EXTRACTION_ERRORS.transcript_extension_asleep;
+    case "outdated":
+      return EXTRACTION_ERRORS.transcript_extension_outdated;
+    case "not_loaded":
+    case "timeout":
+      return EXTRACTION_ERRORS.transcript_timeout;
+    default:
+      return EXTRACTION_ERRORS.transcript_read_failed;
+  }
+}
+
+/**
+ * Whether a video's reading still lacks a transcript worth asking YouTube's
+ * page for. Not when the reader brought one, and not for a video its reader
+ * found gone (oEmbed's "no such video"): there is nothing to open.
+ */
+function wantsPageTranscript(response: ExtractionResponse): boolean {
+  return !(response.ok && (response.status === "ready" || response.error?.code === "not_found"));
+}
+
+/**
+ * A video's reading, completed by its transcript from YouTube's page: the
+ * reader (the deployed site) knows its title and channel; the page knows what
+ * is said. Without a transcript the video is still saved, and says why — unless
+ * neither could tell anything, which is a failure to retry.
+ */
+export function withPageTranscript(response: ExtractionResponse, page: BrowserTranscript, videoId: string): ExtractionResponse {
+  const site = response.ok ? response : undefined;
+  const finalUrl = site?.finalUrl ?? youtubeMomentUrl(videoId);
+  if (page.ok) {
+    const meta: ResourceMeta = { siteName: "YouTube", ...site?.meta };
+    if (!meta.author && page.channel) meta.author = page.channel;
+    const title = site?.title ?? page.title;
+    return {
+      ok: true,
+      kind: "youtube",
+      status: "ready",
+      finalUrl,
+      ...(title ? { title } : {}),
+      meta,
+      content: { transcript: page.segments, transcriptInfo: { source: "captions", provider: "youtube" } },
+    };
+  }
+  const error = browserTranscriptError(page.reason);
+  if (site) return { ...site, status: "partial", error };
+  if (page.reason === "no_transcript" || page.reason === "video_unavailable") {
+    return { ok: true, kind: "youtube", status: "partial", finalUrl, meta: { siteName: "YouTube" }, error };
+  }
+  return response;
+}
+
 /** A title worth replacing: none, or just the address/domain shown in its place. */
 function needsTitle(tab: Pick<Tab, "title" | "url" | "domain">): boolean {
   const title = tab.title?.trim();
@@ -123,7 +197,19 @@ export async function processSource(workspaceId: string, tab: Tab, deps: Process
     const language = resource.kind === "youtube" ? deps.language?.() : undefined;
     response = await deps.extract({ url: tab.url, kind: resource.kind, ...(language ? { language } : {}) });
   } catch {
-    return failed(EXTRACTION_ERRORS.offline);
+    response = { ok: false, error: EXTRACTION_ERRORS.offline };
+  }
+  // A video's transcript, when the reader had none, from YouTube's own page in Chrome.
+  const videoId = resource.kind === "youtube" && deps.readTranscript ? youtubeVideoId(tab.url) : undefined;
+  if (videoId && deps.readTranscript && wantsPageTranscript(response)) {
+    const wake = deps.now() - resource.updatedAt < RECENT_ACTION_MS;
+    let page: BrowserTranscript;
+    try {
+      page = await deps.readTranscript({ videoId, wake });
+    } catch {
+      page = { ok: false, reason: "failed" };
+    }
+    response = withPageTranscript(response, page, videoId);
   }
   if (!response.ok) return failed(response.error);
 
@@ -179,7 +265,7 @@ export async function attachPdfFile(
   }
 }
 
-/** A transcript the person supplied for a video source (see transcript.ts for why Hubble never fetches one). */
+/** A transcript the person supplied for a video source — pasted, or a caption file. */
 export async function attachTranscript(
   workspaceId: string,
   tab: Tab,

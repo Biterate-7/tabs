@@ -641,6 +641,7 @@ export function ProjectHome(props: ProjectHomeProps) {
           onOpen={props.onOpenSource}
           onAttachPdf={async (tab, file) => void (await resources.attachPdf(workspace.id, tab.id, file))}
           onAttachTranscript={(tab, text) => resources.attachTranscript(workspace.id, tab.id, text)}
+          {...(resources.allowYouTube ? { onAllowYouTube: resources.allowYouTube } : {})}
           {...(props.onOpenSourceAt ? { onOpenAt: props.onOpenSourceAt } : {})}
           {...(details?.seek ? { seek: details.seek } : {})}
           {...(details?.turn !== undefined ? { focusTurn: details.turn, terms: query.trim() ? searchTerms(query) : focusTerms } : {})}

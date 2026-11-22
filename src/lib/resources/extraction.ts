@@ -69,6 +69,32 @@ export const EXTRACTION_ERRORS = {
   transcript_busy: { code: "unreachable", message: "Video saved. Hubble couldn't get its transcript just now — try again in a few minutes.", retryable: true },
   transcript_failed: { code: "unreachable", message: "Video saved. The transcript service didn't answer properly — try again.", retryable: true },
   transcript_timeout: { code: "timeout", message: "Video saved. Getting its transcript took too long — try again.", retryable: true },
+  /*
+    Hubble Desktop reads a video's transcript from YouTube's own page through
+    Hubble for Chrome (youtube-browser.ts). These say what that needs, or what
+    went wrong; each can be tried again.
+  */
+  transcript_needs_extension: {
+    code: "needs_extension",
+    message: "Video saved. Connect Hubble for Chrome and Hubble gets its transcript from YouTube.",
+    retryable: true,
+  },
+  transcript_extension_asleep: {
+    code: "needs_extension",
+    message: "Video saved. Hubble for Chrome didn't answer — open Chrome, then try again.",
+    retryable: true,
+  },
+  transcript_extension_outdated: {
+    code: "needs_extension",
+    message: "Video saved. Update Hubble for Chrome to get transcripts from YouTube.",
+    retryable: true,
+  },
+  transcript_needs_access: {
+    code: "needs_access",
+    message: "Video saved. Allow Hubble for Chrome to read YouTube, and it gets the transcript.",
+    retryable: true,
+  },
+  transcript_read_failed: { code: "unreachable", message: "Video saved. Hubble couldn't read its transcript from YouTube — try again.", retryable: true },
   timeout: { code: "timeout", message: "The page took too long to respond.", retryable: true },
   offline: { code: "offline", message: "Hubble couldn't reach its reader. Check your connection.", retryable: true },
   interrupted: { code: "interrupted", message: "Reading was interrupted.", retryable: true },
