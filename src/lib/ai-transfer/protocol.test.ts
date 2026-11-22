@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import * as extension from "../../../extension/src/ai-transfer.js";
+import { YOUTUBE_ACCESS } from "../../../extension/src/youtube-transcript.js";
 import { AI_PROVIDER_IDS, AI_PROVIDERS, isNewChatUrl } from "@/lib/providers/registry";
 import {
   AI_TRANSFER_PROTOCOL,
@@ -62,10 +63,10 @@ describe("parity with the extension", () => {
     }
   });
 
-  it("asks only for the AI apps' own origins, as optional permissions", () => {
+  it("asks only for the AI apps' own origins (and YouTube's, for transcripts), as optional permissions", () => {
     const manifest = JSON.parse(readFileSync(path.resolve(__dirname, "../../../extension/manifest.json"), "utf8"));
     const wanted = Object.values(extension.TRANSFER_PROVIDERS).flatMap((provider) => provider.origins);
-    expect([...manifest.optional_host_permissions].sort()).toEqual([...wanted].sort());
+    expect([...manifest.optional_host_permissions].sort()).toEqual([...wanted, ...YOUTUBE_ACCESS.origins].sort());
     for (const origin of wanted) expect(manifest.host_permissions).not.toContain(origin);
   });
 

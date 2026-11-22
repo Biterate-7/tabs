@@ -91,7 +91,15 @@ export type BrowserActionName =
   | "get_context_activity"
   | "forget_context_activity"
   | "clear_context_activity"
-  | "capture_context_conversation";
+  | "capture_context_conversation"
+  /**
+   * YouTube transcripts (src/lib/resources/youtube-browser.ts): a saved
+   * video's transcript, read from YouTube's own page in Chrome, and the
+   * one-time permission that lets the extension open a video to read it.
+   * Hubble for Chrome 0.12+; an older one refuses the action ("update").
+   */
+  | "read_youtube_transcript"
+  | "request_youtube_access";
 
 export type BrowserCommand<Args = unknown> = {
   id: string;

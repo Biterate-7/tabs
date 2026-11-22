@@ -18,6 +18,7 @@ import { getContent } from "@/lib/resources/content-store"
 import { formatTimestamp } from "@/lib/resources/transcript"
 import { RESOURCE_KIND_LABEL } from "@/lib/resources/types"
 import type { ResourceContent } from "@/lib/resources/types"
+import type { YouTubeAccessAnswer } from "@/lib/resources/youtube-browser"
 import type { Tab } from "@/lib/tabs/types"
 
 const PREVIEW_CHARS = 1200
@@ -54,6 +55,7 @@ export function SourceDetailsDialog({
   onOpen,
   onAttachPdf,
   onAttachTranscript,
+  onAllowYouTube,
   onOpenAt,
   seek,
   focusTurn,
@@ -75,6 +77,8 @@ export function SourceDetailsDialog({
   onOpen: (tab: Tab) => void
   onAttachPdf: (tab: Tab, file: File) => Promise<void>
   onAttachTranscript: (tab: Tab, text: string) => Promise<{ error?: string }>
+  /** Asks Chrome to let Hubble for Chrome read youtube.com, where a video's transcript comes from. */
+  onAllowYouTube?: () => Promise<YouTubeAccessAnswer>
 }) {
   const resource = tab?.resource
   const [title, setTitle] = useState(tab?.title ?? "")
@@ -199,6 +203,7 @@ export function SourceDetailsDialog({
               embeddable={!isDesktop()}
               onOpenAt={(url) => (onOpenAt ? onOpenAt(tab, url) : onOpen(tab))}
               onRetry={() => onRetry(tab)}
+              {...(onAllowYouTube ? { onAllowYouTube } : {})}
             />
           )}
 

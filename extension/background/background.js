@@ -46,7 +46,8 @@ import { hubbleTransferStep } from "../src/ai-transfer-page.js";
 import { DESKTOP_LAUNCH_URL, buildDesktopPayload, findDesktop } from "../src/desktop.js";
 import { createDesktopAdd, createDesktopSave } from "../src/desktop-add.js";
 import { buildSessionCapture } from "../src/sessions.js";
-import { CONTEXT_ACTIONS, validateBrowserCommand } from "../src/browser-commands.js";
+import { CONTEXT_ACTIONS, YOUTUBE_ACTIONS, validateBrowserCommand } from "../src/browser-commands.js";
+import { YOUTUBE_ACCESS, createYouTubeTranscriptReader, readYouTubeTranscriptFromPage } from "../src/youtube-transcript.js";
 import { createActivityCollector, isPaused, readContextSettings } from "../src/context-activity.js";
 import { activityKeyOf, isDetectable } from "../src/context-sites.js";
 import { createIdentityVerifier, ownerForDesktopAccount } from "../src/context-identity.js";
@@ -352,7 +353,7 @@ async function handleBrowserCommand({ id, action, args }, sender) {
   }
   // Context detection answers only Hubble's own page (top frame, Hubble's origin) — never a frame or another site.
   // Nor a Hubble tab in a private window: what Chrome keeps for context is the ordinary profile's, never the private one's.
-  if (CONTEXT_ACTIONS.includes(action) && (!fromHubblePage(sender) || sender?.tab?.incognito === true)) {
+  if ((CONTEXT_ACTIONS.includes(action) || YOUTUBE_ACTIONS.includes(action)) && (!fromHubblePage(sender) || sender?.tab?.incognito === true)) {
     return { id, ok: false, error: "Only Hubble can ask for this." };
   }
   // Which account it is for is Hubble's server's answer, not the page's (context-identity.js). Writes check afresh.
@@ -362,7 +363,7 @@ async function handleBrowserCommand({ id, action, args }, sender) {
     validated.args = { ...validated.args, owner: identity.owner };
   }
 
-  const handler = CONTEXT_HANDLERS[action] ?? BROWSER_ACTION_HANDLERS[action];
+  const handler = CONTEXT_HANDLERS[action] ?? YOUTUBE_HANDLERS[action] ?? BROWSER_ACTION_HANDLERS[action];
   if (!handler) {
     // Unreachable in practice (validateBrowserCommand's allowlist and this
     // handler map are drawn from the same action names), but a defensive
@@ -1254,8 +1255,11 @@ function serveDesktopCommands(reason, { forMs = DESKTOP_SERVE_IDLE_MS } = {}) {
   void (async () => {
     let port;
     let served = 0;
+    // Commands still running (a transcript read takes seconds): collecting goes on meanwhile, so one slow command
+    // never holds up the next, and serving lasts until each has answered.
+    const running = new Set();
     try {
-      while (Date.now() < desktopServeUntil) {
+      while (Date.now() < desktopServeUntil || running.size > 0) {
         // Each round reads the link from chrome.storage, which also keeps this worker awake while it waits.
         const collected = await desktopLink.collectCommands({ port });
         if (!collected.ok) {
@@ -1268,14 +1272,19 @@ function serveDesktopCommands(reason, { forMs = DESKTOP_SERVE_IDLE_MS } = {}) {
           continue;
         }
         desktopServeUntil = Math.max(desktopServeUntil, Date.now() + DESKTOP_SERVE_IDLE_MS);
-        await Promise.all(
-          collected.commands.map(async (command) => {
+        const answerPort = port;
+        for (const command of collected.commands) {
+          const task = (async () => {
             const response = await handleDesktopCommand(command);
             served += 1;
-            await desktopLink.sendResult(port, response);
-          })
-        );
+            await desktopLink.sendResult(answerPort, response);
+          })()
+            .catch((err) => log("desktop-command-failed", { action: command.action, detail: errorMessage(err) }))
+            .finally(() => running.delete(task));
+          running.add(task);
+        }
       }
+      await Promise.allSettled([...running]);
     } catch (err) {
       log("desktop-commands-failed", { reason, detail: errorMessage(err) });
     } finally {
@@ -1290,7 +1299,7 @@ async function handleDesktopCommand({ id, action, args }) {
   if (!DESKTOP_COMMAND_ACTIONS.includes(action)) return { id, ok: false, error: "Hubble Desktop doesn't ask Chrome that." };
   const validated = validateBrowserCommand(action, args);
   if (!validated.ok) return { id, ok: false, error: validated.error };
-  const handler = CONTEXT_HANDLERS[action] ?? BROWSER_ACTION_HANDLERS[action];
+  const handler = CONTEXT_HANDLERS[action] ?? YOUTUBE_HANDLERS[action] ?? BROWSER_ACTION_HANDLERS[action];
   if (!handler) return { id, ok: false, error: `No handler registered for "${action}".` };
   try {
     const commandArgs = CONTEXT_ACTIONS.includes(action) ? { ...validated.args, owner: await ownerForDesktopAccount(validated.args.account) } : validated.args;
@@ -1518,7 +1527,7 @@ async function requestProviderPermission(provider, origins, opId, purpose = "tra
   let windowId;
   try {
     const created = await chrome.windows.create({
-      url: chrome.runtime.getURL(`permissions/grant.html?provider=${encodeURIComponent(provider)}&op=${encodeURIComponent(opId)}${purpose === "context" ? "&purpose=context" : ""}`),
+      url: chrome.runtime.getURL(`permissions/grant.html?provider=${encodeURIComponent(provider)}&op=${encodeURIComponent(opId)}${purpose === "transfer" ? "" : `&purpose=${encodeURIComponent(purpose)}`}`),
       type: "popup",
       width: 480,
       height: 440,
@@ -1844,6 +1853,49 @@ async function contextSettingsFor(owner) {
   // Someone else's choice: this account hasn't chosen, and isn't told what the other chose.
   return { ...answer, settings: withoutOwner(readContextSettings(undefined)), otherAccount: true };
 }
+
+// ---------------------------------------------------------------------------
+// YouTube transcripts (src/youtube-transcript.js): a saved video's transcript,
+// read from YouTube's own "Show transcript" panel — in a tab showing the
+// video, or a muted background tab opened for it with the person's permission
+// for www.youtube.com. Asked by Hubble only (its page, or Hubble Desktop over
+// the paired link), by video id. Nothing read here is logged.
+// ---------------------------------------------------------------------------
+
+const youtubeTranscripts = createYouTubeTranscriptReader({
+  tabs: {
+    query: (query) => chrome.tabs.query(query),
+    get: (tabId) => chrome.tabs.get(tabId),
+    create: (props) => chrome.tabs.create(props),
+    update: (tabId, props) => chrome.tabs.update(tabId, props),
+    remove: (tabId) => chrome.tabs.remove(tabId),
+  },
+  inject: async (tabId, videoId, settings) => {
+    const [injection] = await chrome.scripting.executeScript({ target: { tabId }, func: readYouTubeTranscriptFromPage, args: [videoId, settings] });
+    return injection?.result;
+  },
+  hasAccess: () => permissionContains(YOUTUBE_ACCESS.origins),
+  history: chrome.history ? { getVisits: (details) => chrome.history.getVisits(details), deleteUrl: (details) => chrome.history.deleteUrl(details) } : undefined,
+  log,
+});
+
+const YOUTUBE_HANDLERS = {
+  read_youtube_transcript: async ({ videoId }) => {
+    const stop = keepWorkerAlive();
+    try {
+      return await youtubeTranscripts.read(videoId);
+    } finally {
+      stop();
+    }
+  },
+
+  /** Opens the permission window for www.youtube.com; resolves with what Chrome actually granted. */
+  request_youtube_access: async () => {
+    if (await permissionContains(YOUTUBE_ACCESS.origins)) return { granted: true };
+    const answer = await requestProviderPermission("youtube", YOUTUBE_ACCESS.origins, newRequestId(), "youtube");
+    return { granted: answer === "granted", answer };
+  },
+};
 
 /** Context detection's commands, after validateBrowserCommand and the Hubble-page check in handleBrowserCommand. */
 const CONTEXT_HANDLERS = {

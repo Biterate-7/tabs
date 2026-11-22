@@ -80,6 +80,67 @@ describe("VideoTranscript states", () => {
   })
 })
 
+describe("VideoTranscript states — transcripts read from YouTube's page through Chrome", () => {
+  const waiting = (error: (typeof EXTRACTION_ERRORS)[keyof typeof EXTRACTION_ERRORS]) => ({ ...readyResource, status: "partial" as const, content: undefined, error })
+  const stateOf = (container: HTMLElement) => container.querySelector("[data-transcript-state]")?.getAttribute("data-transcript-state")
+
+  it("is unavailable — no retry — when YouTube has no transcript, or won't show the video", () => {
+    for (const error of [EXTRACTION_ERRORS.transcript_unavailable, EXTRACTION_ERRORS.video_unavailable]) {
+      const { container, unmount } = renderReader({ resource: waiting(error), content: null })
+      expect(stateOf(container)).toBe("unavailable")
+      expect(screen.queryByRole("button", { name: /Try again|Allow in Chrome/ })).toBeNull()
+      unmount()
+    }
+  })
+
+  it("is failed, with Try again, when a read went wrong", async () => {
+    for (const error of [EXTRACTION_ERRORS.transcript_read_failed, EXTRACTION_ERRORS.transcript_timeout]) {
+      const onRetry = vi.fn()
+      const { container, unmount } = renderReader({ resource: waiting(error), content: null, onRetry })
+      expect(stateOf(container)).toBe("failed")
+      expect(screen.getByText(error.message)).toBeTruthy()
+      await userEvent.click(screen.getByRole("button", { name: /Try again/ }))
+      expect(onRetry).toHaveBeenCalledTimes(1)
+      unmount()
+    }
+  })
+
+  it("asks to connect Hubble for Chrome (a step, not an error), and can try again", async () => {
+    const onRetry = vi.fn()
+    const { container } = renderReader({ resource: waiting(EXTRACTION_ERRORS.transcript_needs_extension), content: null, onRetry })
+    expect(stateOf(container)).toBe("needs-chrome")
+    expect(container.querySelector(".text-destructive")).toBeNull()
+    await userEvent.click(screen.getByRole("button", { name: /Try again/ }))
+    expect(onRetry).toHaveBeenCalledTimes(1)
+  })
+
+  it("offers Allow in Chrome when the extension may not read youtube.com yet", async () => {
+    let answer!: (value: { granted: boolean }) => void
+    const onAllowYouTube = vi.fn(() => new Promise<{ granted: boolean }>((resolve) => (answer = resolve)))
+    const { container } = renderReader({ resource: waiting(EXTRACTION_ERRORS.transcript_needs_access), content: null, onAllowYouTube })
+    expect(stateOf(container)).toBe("needs-chrome")
+    await userEvent.click(screen.getByRole("button", { name: /Allow in Chrome/ }))
+    expect(onAllowYouTube).toHaveBeenCalledTimes(1)
+    expect((screen.getByRole("button", { name: /Waiting for Chrome/ }) as HTMLButtonElement).disabled).toBe(true)
+    await act(async () => answer({ granted: false }))
+    expect(screen.getByText(/Chrome didn't allow it/)).toBeTruthy()
+    expect(screen.getByRole("button", { name: /Allow in Chrome/ })).toBeTruthy()
+  })
+
+  it("says when Hubble for Chrome didn't answer the Allow request", async () => {
+    const onAllowYouTube = vi.fn(async () => ({ granted: false as const, reason: "no_answer" as const }))
+    renderReader({ resource: waiting(EXTRACTION_ERRORS.transcript_needs_access), content: null, onAllowYouTube })
+    await userEvent.click(screen.getByRole("button", { name: /Allow in Chrome/ }))
+    expect(screen.getByText(/didn't answer — open Chrome/)).toBeTruthy()
+  })
+
+  it("without a way to ask (no Allow action given), falls back to Try again", () => {
+    renderReader({ resource: waiting(EXTRACTION_ERRORS.transcript_needs_access), content: null })
+    expect(screen.queryByRole("button", { name: /Allow in Chrome/ })).toBeNull()
+    expect(screen.getByRole("button", { name: /Try again/ })).toBeTruthy()
+  })
+})
+
 describe("searching the transcript", () => {
   it("finds a phrase across lines, ignoring case, and marks the words", async () => {
     renderReader()

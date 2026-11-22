@@ -31,6 +31,20 @@ describe("grant window", () => {
     expect(chrome.runtime.sendMessage).toHaveBeenCalledWith({ type: MSG_AI_PERMISSION_ANSWER, payload: { opId: "op_0123456789", provider: "chatgpt", granted: true } });
   });
 
+  it("asks for youtube.com — and only it — to read a saved video's transcript, saying what it does and doesn't do", async () => {
+    initGrant(document, "?provider=youtube&op=op_0123456789&purpose=youtube");
+    expect(document.getElementById("grant-heading").textContent).toBe("Let Hubble read YouTube transcripts?");
+    expect(document.getElementById("grant-why").textContent).toContain("youtube.com");
+    const lines = [...document.querySelectorAll("#grant-list li")].map((item) => item.textContent);
+    expect(lines.join(" ")).toMatch(/Transcript panel/);
+    expect(lines.join(" ")).toMatch(/muted background tab/);
+    expect(lines.join(" ")).toMatch(/doesn't read your YouTube account/);
+    document.getElementById("grant-allow").click();
+    await vi.waitFor(() => expect(window.close).toHaveBeenCalled());
+    expect(chrome.permissions.request).toHaveBeenCalledWith({ origins: ["https://www.youtube.com/*"] });
+    expect(chrome.runtime.sendMessage).toHaveBeenCalledWith({ type: MSG_AI_PERMISSION_ANSWER, payload: { opId: "op_0123456789", provider: "youtube", granted: true } });
+  });
+
   it("stays open and says so when Chrome's prompt is declined", async () => {
     chrome.permissions.request.mockResolvedValue(false);
     initGrant(document, "?provider=perplexity&op=op_0123456789");

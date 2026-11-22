@@ -11,6 +11,8 @@
 // TABDUMP_BROWSER_COMMAND message can never reach a chrome.* call with
 // unvalidated data, regardless of what page or script produced it.
 
+import { isVideoId } from "./youtube-transcript.js";
+
 const MAX_URLS_PER_COMMAND = 50;
 const MAX_TAB_IDS_PER_COMMAND = 200;
 const MAX_HISTORY_RESULTS = 5000;
@@ -36,6 +38,12 @@ export const CONTEXT_ACTIONS = Object.freeze([
   "clear_context_activity",
   "capture_context_conversation",
 ]);
+
+/**
+ * YouTube transcripts (src/youtube-transcript.js): only Hubble asks — its
+ * page, or Hubble Desktop over the paired link — and only by video id.
+ */
+export const YOUTUBE_ACTIONS = Object.freeze(["read_youtube_transcript", "request_youtube_access"]);
 
 /**
  * Safelist, not a blocklist: only ever open http/https URLs. This is
@@ -230,6 +238,20 @@ export const BROWSER_COMMAND_VALIDATORS = {
     const workspaceId = args?.workspaceId;
     if (typeof workspaceId !== "string" || workspaceId.length === 0 || workspaceId.length > 200) return fail("`workspaceId` must be a project id.");
     return ok({ url: args.url, workspaceId });
+  },
+
+  /**
+   * A saved video's transcript, read from YouTube's own page. Only the
+   * 11-character id travels: the address opened is rebuilt from it.
+   */
+  read_youtube_transcript(args) {
+    if (!isVideoId(args?.videoId)) return fail("`videoId` must be an 11-character YouTube video id.");
+    return ok({ videoId: args.videoId });
+  },
+
+  /** Opens the extension's own window asking the person to let it read YouTube pages; resolves with Chrome's answer. */
+  request_youtube_access() {
+    return ok({});
   },
 
   create_browser_window(args) {

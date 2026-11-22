@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useEffect, useRef, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { getProjectContents, putContent, deleteContent, moveContent, pruneContentExcept } from "@/lib/resources/content-store"
 import { getStorageNamespace } from "@/lib/storage/namespace"
 import {
@@ -18,6 +18,11 @@ import {
 import { recordProjectEvent } from "@/lib/projects/activity"
 import { recordLoopMilestone } from "@/lib/product/loop-log"
 import { isDesktop } from "@/lib/platform/detect"
+import { desktopExtensionLink } from "@/lib/platform/desktop"
+import { startConnectionWatch, subscribeConnection } from "@/lib/browser/bridge"
+import { readTranscriptThroughBrowser, requestYouTubeAccess } from "@/lib/resources/youtube-browser"
+import type { YouTubeAccessAnswer } from "@/lib/resources/youtube-browser"
+import type { TabResource } from "@/lib/resources/types"
 import type { ProcessDeps, ProcessResult } from "@/lib/resources/process"
 import type { Tab } from "@/lib/tabs/types"
 import type { WorkspaceStore } from "@/lib/workspace/types"
@@ -60,11 +65,26 @@ import type { WorkspaceStore } from "@/lib/workspace/types"
  *
  * Paths that know they are final still forget at once: Remove's toast
  * closing without Undo, and deleting a project. All of it is idempotent.
+ *
+ * ## Video transcripts come through Chrome
+ *
+ * A YouTube video's transcript is read from YouTube's own page by Hubble for
+ * Chrome (src/lib/resources/youtube-browser.ts). A video that waits on it —
+ * none connected, none answering, or no permission for youtube.com yet — is
+ * asked again by itself when Hubble for Chrome connects or shows it is awake
+ * (at most once a minute), and right after the person allows youtube.com.
  */
 
 const CONCURRENCY = 3
 /** How long after a page load the orphaned-content sweep waits, so sync can settle first. */
 export const CONTENT_GRACE_MS = 60_000
+/** Videos waiting on Hubble for Chrome are asked again at most this often. */
+export const EXTENSION_REASK_MS = 60_000
+
+/** A video saved without its transcript because Hubble for Chrome didn't answer, or may not read youtube.com yet. */
+export function waitsForChrome(resource: TabResource | undefined): boolean {
+  return resource?.kind === "youtube" && resource.status === "partial" && (resource.error?.code === "needs_extension" || resource.error?.code === "needs_access")
+}
 
 /** Every project's item ids — its tabs and its notes — what content may be kept for. */
 function presentTabs(store: WorkspaceStore): Map<string, Set<string>> {
@@ -77,6 +97,8 @@ export type ResourceActions = {
   attachTranscript: (workspaceId: string, tabId: string, text: string) => Promise<{ error?: string }>
   /** Forget stored content for sources a project no longer has. */
   forget: (workspaceId: string, tabIds: readonly string[]) => void
+  /** Asks the person, in Chrome, to let Hubble for Chrome read youtube.com; videos waiting for that are read again once it is allowed. */
+  allowYouTube?: () => Promise<YouTubeAccessAnswer>
 }
 
 function updateTab(store: WorkspaceStore, workspaceId: string, tabId: string, update: (tab: Tab) => Tab | null): WorkspaceStore | null {
@@ -124,6 +146,7 @@ export function useResourceProcessing(options: {
         putContent,
         now: () => Date.now(),
         language: browserLanguage,
+        readTranscript: readTranscriptThroughBrowser,
         ...optionsRef.current.deps,
       }
     }
@@ -321,5 +344,58 @@ export function useResourceProcessing(options: {
     void deleteContent(workspaceId, tabIds).catch(() => undefined)
   }, [])
 
-  return { retry, attachPdf, attachTranscript: attachTranscriptText, forget }
+  /** Every saved video `match` picks, back to pending — in one commit. */
+  const requeueVideos = useCallback((match: (resource: TabResource) => boolean) => {
+    const current = optionsRef.current.getStore()
+    if (!current) return
+    const now = Date.now()
+    let changed = false
+    const workspaces = current.workspaces.map((workspace) => {
+      let touched = false
+      const tabs = workspace.tabs.map((tab) => {
+        if (!tab.resource || !waitsForChrome(tab.resource) || !match(tab.resource)) return tab
+        touched = true
+        return { ...tab, resource: requeue(tab.resource, now) }
+      })
+      if (!touched) return workspace
+      changed = true
+      return { ...workspace, tabs }
+    })
+    if (changed) optionsRef.current.commit({ ...current, workspaces })
+  }, [])
+
+  // Videos waiting on Hubble for Chrome: asked again when it connects, or does something that shows it is awake.
+  // The once-a-minute limit outlives each subscription: a video that is asked and still waits subscribes afresh.
+  const lastReask = useRef(0)
+  const waitingForChrome = useMemo(() => Boolean(store?.workspaces.some((workspace) => workspace.tabs.some((tab) => waitsForChrome(tab.resource)))), [store])
+  useEffect(() => {
+    if (!enabled || !waitingForChrome) return
+    const again = () => {
+      const now = Date.now()
+      if (now - lastReask.current < EXTENSION_REASK_MS) return
+      lastReask.current = now
+      requeueVideos(() => true)
+    }
+    let disposed = false
+    const stops: (() => void)[] = [startConnectionWatch(), subscribeConnection((connected) => connected && again())]
+    if (isDesktop()) {
+      for (const listen of [desktopExtensionLink.onRequest, desktopExtensionLink.onNudge]) {
+        void listen(again)
+          .then((stop) => (disposed ? stop() : stops.push(stop)))
+          .catch(() => undefined)
+      }
+    }
+    return () => {
+      disposed = true
+      for (const stop of stops) stop()
+    }
+  }, [enabled, waitingForChrome, requeueVideos])
+
+  const allowYouTube = useCallback(async () => {
+    const answer = await requestYouTubeAccess()
+    if (answer.granted) requeueVideos((resource) => resource.error?.code === "needs_access")
+    return answer
+  }, [requeueVideos])
+
+  return { retry, attachPdf, attachTranscript: attachTranscriptText, forget, allowYouTube }
 }

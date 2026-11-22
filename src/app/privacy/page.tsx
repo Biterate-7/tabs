@@ -68,9 +68,16 @@ export default function PrivacyPolicyPage() {
             before any fetch happens.
           </li>
           <li id="youtube-transcripts">
-            <strong>YouTube transcripts, on deployments that enable them.</strong> Automatic transcripts are
-            optional: they work only where the operator has configured a transcript service (currently
-            Supadata). There, when you add a YouTube video to a subject, Hubble&apos;s server asks that service
+            <strong>YouTube transcripts.</strong> When you add a YouTube video to a subject, Hubble for Chrome
+            reads the transcript YouTube shows under the video (its &quot;Show transcript&quot; panel) from
+            YouTube&apos;s own page in your Chrome — in a tab already showing the video or, once you allow
+            Hubble for Chrome to read youtube.com, in a muted background tab it opens and closes again. The
+            lines go straight to Hubble Desktop over the connection on your computer and are stored on your
+            device; they never pass through Hubble&apos;s servers. To YouTube this is an ordinary visit to that
+            video from your browser, under whatever YouTube account your Chrome is signed in to; the background
+            tab&apos;s visit is removed from Chrome&apos;s history unless you had visited the video before.
+            Separately, a deployment whose operator has configured a transcript service (currently Supadata)
+            may ask it instead: when you add a YouTube video to a subject, Hubble&apos;s server asks that service
             for the video&apos;s existing captions, so you can read and search what is said. The request comes
             from Hubble&apos;s server, not your browser, and carries only the video&apos;s public YouTube address
             and a short language code (such as &quot;en&quot;) from your browser&apos;s settings — nothing about you, your account,

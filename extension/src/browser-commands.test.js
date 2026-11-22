@@ -32,7 +32,7 @@ describe("validateBrowserCommand", () => {
     expect(result.error).toMatch(/unknown or disallowed/i);
   });
 
-  it("exposes exactly the spec's read/open/close/pin/window/history actions, and context detection's", () => {
+  it("exposes exactly the spec's read/open/close/pin/window/history actions, context detection's and YouTube transcripts'", () => {
     expect([...ALLOWED_BROWSER_ACTIONS].sort()).toEqual(
       [
         "get_context_settings",
@@ -55,6 +55,8 @@ describe("validateBrowserCommand", () => {
         "unpin_tab",
         "move_tabs_to_window",
         "create_browser_window",
+        "read_youtube_transcript",
+        "request_youtube_access",
       ].sort()
     );
   });

@@ -469,7 +469,7 @@ The website's behaviour is unchanged by that audit.
 | Feature | Web | Desktop | How desktop was checked |
 | --- | --- | --- | --- |
 | Projects: create, rename, delete, navigate | Works | Works | Driven in the app |
-| Add links (web page, YouTube, PDF by address) | Works | Works — reader on the deployed site | Wikipedia, YouTube (title + transcript), example.com |
+| Add links (web page, YouTube, PDF by address) | Works | Works — reader on the deployed site; a video's transcript from YouTube's page via Hubble for Chrome 0.12+ (paired) | Wikipedia, YouTube (title + transcript), example.com |
 | Private-network addresses refused by the reader | Works | Works | `qa.localtest.me` refused |
 | Favicons | Works | Works — deployed resolver | Probe |
 | Open a saved source | Same tab / extension | Default browser; window stays on Hubble | A local server received the request |

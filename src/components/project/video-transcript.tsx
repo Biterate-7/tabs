@@ -1,7 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
-import { ExternalLink, Loader2, Play, RotateCw, Search } from "lucide-react"
+import { Captions, ExternalLink, Loader2, Play, RotateCw, Search } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { markMatches, searchPhrase, searchTerms, transcriptMoments } from "@/lib/resources/search"
@@ -9,6 +9,7 @@ import { formatTimestamp, transcriptSpan } from "@/lib/resources/transcript"
 import { parseYouTubeUrl, YOUTUBE_PLAYER_ORIGINS, youtubeEmbedUrl, youtubeMomentUrl, youtubeThumbnailUrl } from "@/lib/resources/youtube"
 import { cn } from "@/lib/utils"
 import type { ResourceContent, TabResource, TranscriptSegment } from "@/lib/resources/types"
+import type { YouTubeAccessAnswer } from "@/lib/resources/youtube-browser"
 import type { Tab } from "@/lib/tabs/types"
 
 /** A moment to open the reader at — from a search result. `nonce` makes the same moment, asked twice, seek twice. */
@@ -42,6 +43,7 @@ export function VideoTranscript({
   embeddable,
   onOpenAt,
   onRetry,
+  onAllowYouTube,
 }: {
   tab: Tab
   resource: TabResource
@@ -52,6 +54,8 @@ export function VideoTranscript({
   embeddable: boolean
   onOpenAt: (url: string) => void
   onRetry: () => void
+  /** Asks Chrome to let Hubble for Chrome read youtube.com, where the transcript comes from. */
+  onAllowYouTube?: () => Promise<YouTubeAccessAnswer>
 }) {
   const video = parseYouTubeUrl(tab.url)
   const lines = content?.transcript
@@ -198,7 +202,7 @@ export function VideoTranscript({
         )}
       </div>
 
-      <TranscriptState resource={resource} content={content} onRetry={onRetry} />
+      <TranscriptState resource={resource} content={content} onRetry={onRetry} {...(onAllowYouTube ? { onAllowYouTube } : {})} />
 
       {lines && lines.length > 0 && (
         <section aria-label="Transcript" className="flex flex-col gap-2">
@@ -244,7 +248,27 @@ export function VideoTranscript({
   )
 }
 
-function TranscriptState({ resource, content, onRetry }: { resource: TabResource; content: ResourceContent | null | undefined; onRetry: () => void }) {
+/**
+ * Where the transcript stands, in words:
+ *
+ *   Getting the transcript…          being read from YouTube's page (processing)
+ *   (the transcript itself)           available
+ *   <why>                             unavailable — YouTube has none, or won't show the video
+ *   <why>  [Try again]                failed — a read that went wrong, or Hubble for Chrome didn't answer
+ *   <why>  [Allow in Chrome]          Hubble for Chrome may not read youtube.com yet
+ */
+function TranscriptState({
+  resource,
+  content,
+  onRetry,
+  onAllowYouTube,
+}: {
+  resource: TabResource
+  content: ResourceContent | null | undefined
+  onRetry: () => void
+  onAllowYouTube?: () => Promise<YouTubeAccessAnswer>
+}) {
+  const [asking, setAsking] = useState<"idle" | "asking" | "refused" | "unanswered">("idle")
   if (resource.status === "pending" || resource.status === "processing") {
     return (
       <p role="status" className="flex items-center gap-1.5 text-body-sm text-muted-foreground" data-transcript-state="extracting">
@@ -271,13 +295,35 @@ function TranscriptState({ resource, content, onRetry }: { resource: TabResource
     return null
   }
   const error = resource.error
+  // Waiting on Hubble for Chrome is a step to take, not an error; a read that went wrong is.
+  const needsChrome = error?.code === "needs_access" || error?.code === "needs_extension"
+  const state = needsChrome ? "needs-chrome" : resource.status === "failed" || error?.retryable ? "failed" : "unavailable"
+  const message =
+    asking === "refused"
+      ? "Chrome didn't allow it. Choose Allow in Chrome's prompt — or add a transcript yourself."
+      : asking === "unanswered"
+        ? "Hubble for Chrome didn't answer — open Chrome, then try again."
+        : (error?.message ?? "Hubble has no transcript of this video.")
+  const allow = async () => {
+    if (!onAllowYouTube) return
+    setAsking("asking")
+    const answer = await onAllowYouTube().catch(() => ({ granted: false as const, reason: "failed" as const }))
+    // Allowed: the video goes back to "Getting the transcript…" on its own.
+    setAsking(answer.granted ? "idle" : "reason" in answer ? "unanswered" : "refused")
+  }
   return (
-    <div className={cn("flex flex-wrap items-center gap-2 text-body-sm", resource.status === "failed" ? "text-destructive" : "text-muted-foreground")} data-transcript-state={resource.status === "failed" ? "failed" : "unavailable"}>
-      <span className="min-w-0">{error?.message ?? "Hubble has no transcript of this video."}</span>
-      {error?.retryable && (
-        <Button type="button" size="xs" variant="ghost" onClick={onRetry}>
-          <RotateCw /> Try again
+    <div className={cn("flex flex-wrap items-center gap-2 text-body-sm", state === "failed" ? "text-destructive" : "text-muted-foreground")} data-transcript-state={state}>
+      <span className="min-w-0">{message}</span>
+      {error?.code === "needs_access" && onAllowYouTube ? (
+        <Button type="button" size="xs" variant="ghost" disabled={asking === "asking"} onClick={() => void allow()}>
+          <Captions /> {asking === "asking" ? "Waiting for Chrome…" : "Allow in Chrome"}
         </Button>
+      ) : (
+        error?.retryable && (
+          <Button type="button" size="xs" variant="ghost" onClick={onRetry}>
+            <RotateCw /> Try again
+          </Button>
+        )
       )}
     </div>
   )

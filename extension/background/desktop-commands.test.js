@@ -135,6 +135,75 @@ describe("Commands from Hubble Desktop", () => {
     expect(byId.a3.result).toMatchObject({ otherAccount: true, settings: { mode: "off" } });
   });
 
+  it("reads a YouTube video's transcript from the tab showing it — and a slow read never holds up the next command", async () => {
+    const VIDEO = "https://www.youtube.com/watch?v=dQw4w9WgXcQ";
+    let release;
+    chrome.scripting = {
+      executeScript: vi.fn(
+        ({ target, args }) =>
+          new Promise((resolve) => {
+            release = () => resolve([{ result: { ok: true, videoId: args[0], segments: [{ start: 18, text: "We're no strangers to love" }] } }]);
+            expect(target).toEqual({ tabId: 5 });
+          })
+      ),
+    };
+    chrome.tabs.query.mockResolvedValue([tab({ id: 5, url: VIDEO, active: true })]);
+    globalThis.fetch = pairedDesktopFetch({ commands: [{ id: "b1", action: "read_youtube_transcript", args: { videoId: "dQw4w9WgXcQ" } }] });
+    await import("./background.js");
+    navigate(83, WAKE);
+    await vi.waitFor(() => expect(chrome.scripting.executeScript).toHaveBeenCalled(), { timeout: 3000 });
+    // While the page is being read, Hubble asks something else: it is answered at once.
+    fetch.queue({ id: "b2", action: "list_browser_windows", args: {} });
+    await vi.waitFor(() => expect(fetch.results.map((result) => result.id)).toEqual(["b2"]), { timeout: 3000 });
+    release();
+    await vi.waitFor(() => expect(fetch.results).toHaveLength(2), { timeout: 3000 });
+    expect(fetch.results[1]).toEqual({ id: "b1", ok: true, result: { ok: true, videoId: "dQw4w9WgXcQ", segments: [{ start: 18, text: "We're no strangers to love" }], via: "open-tab" } });
+    // Read where it was open: no tab opened or closed for it.
+    expect(chrome.tabs.create).not.toHaveBeenCalled();
+    expect(chrome.tabs.remove.mock.calls).toEqual([[83]]);
+  });
+
+  it("opens nothing for a transcript without the person's permission for youtube.com, and says so", async () => {
+    chrome.scripting = { executeScript: vi.fn() };
+    globalThis.fetch = pairedDesktopFetch({
+      commands: [
+        { id: "c3", action: "read_youtube_transcript", args: { videoId: "dQw4w9WgXcQ" } },
+        { id: "c4", action: "read_youtube_transcript", args: { videoId: "https://evil.example/" } },
+      ],
+    });
+    await import("./background.js");
+    navigate(84, WAKE);
+    await vi.waitFor(() => expect(fetch.results).toHaveLength(2), { timeout: 3000 });
+    const byId = Object.fromEntries(fetch.results.map((result) => [result.id, result]));
+    expect(byId.c3).toEqual({ id: "c3", ok: true, result: { ok: false, reason: "no-access" } });
+    expect(byId.c4).toMatchObject({ id: "c4", ok: false });
+    expect(chrome.permissions.contains).toHaveBeenCalledWith({ origins: ["https://www.youtube.com/*"] });
+    expect(chrome.scripting.executeScript).not.toHaveBeenCalled();
+    expect(chrome.tabs.create).not.toHaveBeenCalled();
+  });
+
+  it("asks for youtube.com in its own permission window, and answers with what Chrome granted", async () => {
+    chrome.runtime.getURL = (page) => `chrome-extension://hubble-extension/${page}`;
+    chrome.windows.create = vi.fn(async () => ({ id: 900 }));
+    chrome.windows.onRemoved = { addListener: vi.fn(), removeListener: vi.fn() };
+    let granted = false;
+    chrome.permissions.contains = vi.fn(async () => granted);
+    const added = [];
+    chrome.permissions.onAdded = { addListener: vi.fn((fn) => added.push(fn)), removeListener: vi.fn() };
+    globalThis.fetch = pairedDesktopFetch({ commands: [{ id: "c5", action: "request_youtube_access", args: {} }] });
+    await import("./background.js");
+    navigate(85, WAKE);
+    await vi.waitFor(() => expect(chrome.windows.create).toHaveBeenCalled(), { timeout: 3000 });
+    const asked = new URL(chrome.windows.create.mock.calls[0][0].url, "chrome-extension://hubble-extension/");
+    expect(asked.pathname).toMatch(/grant\.html$/);
+    expect(asked.searchParams.get("provider")).toBe("youtube");
+    expect(asked.searchParams.get("purpose")).toBe("youtube");
+    granted = true;
+    for (const fn of added) fn({ origins: ["https://www.youtube.com/*"] });
+    await vi.waitFor(() => expect(fetch.results).toHaveLength(1), { timeout: 3000 });
+    expect(fetch.results[0]).toEqual({ id: "c5", ok: true, result: { granted: true, answer: "granted" } });
+  });
+
   it("collects nothing when it isn't paired, and ignores addresses that only look like the wake", async () => {
     installChrome({});
     globalThis.fetch = pairedDesktopFetch({ commands: [{ id: "f1", action: "list_browser_tabs", args: {} }] });

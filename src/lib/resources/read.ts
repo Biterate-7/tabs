@@ -16,9 +16,11 @@ import type { ConversationTurn, ResourceContent, ResourceError, ResourceErrorCod
  * that never ends.
  *
  * One upgrade happens here too: a YouTube video saved before Hubble could
- * fetch transcripts (it carries that era's "Transcript isn't available"
- * words and no content) goes back to pending, so it is asked for one once.
- * Its next answer replaces those words, so this never repeats.
+ * get transcripts (it carries that era's "Transcript isn't available" words,
+ * or "Automatic transcripts aren't set up" from when only a paid reader
+ * service could, and no content) goes back to pending, so it is asked for one
+ * once — now from YouTube's own page, through Hubble for Chrome. Its next
+ * answer replaces those words, so this never repeats.
  */
 
 const ERROR_CODES: readonly ResourceErrorCode[] = [
@@ -32,6 +34,8 @@ const ERROR_CODES: readonly ResourceErrorCode[] = [
   "pdf_unreadable",
   "transcript_unavailable",
   "needs_capture",
+  "needs_extension",
+  "needs_access",
   "timeout",
   "offline",
   "interrupted",
@@ -114,7 +118,12 @@ export function readTabResource(raw: unknown): TabResource | undefined {
     }
   }
   // "Ready" is a claim that content exists; without a summary of it, it is not ready.
-  const neverAsked = source.kind === "youtube" && status === "partial" && !content && error?.code === "transcript_unavailable" && error.message === LEGACY_TRANSCRIPT_MESSAGE;
+  const neverAsked =
+    source.kind === "youtube" &&
+    status === "partial" &&
+    !content &&
+    error?.code === "transcript_unavailable" &&
+    (error.message === LEGACY_TRANSCRIPT_MESSAGE || error.message === EXTRACTION_ERRORS.transcripts_off.message);
   const honestStatus = (status === "ready" && !content) || neverAsked ? "pending" : status;
   const attempts = neverAsked ? 0 : count(source.attempts);
 
