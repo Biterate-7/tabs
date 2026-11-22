@@ -24,8 +24,9 @@
 //! made is the one they are approving. Only the extension whose origin made
 //! the request can collect its answer, and the token is handed over exactly
 //! once. Hubble keeps only a SHA-256 of each token (in `extension-links.json`
-//! in the app's data folder), with the extension's origin; Settings lists
-//! each link and disconnects it.
+//! in the app's data folder, readable by this account only: see
+//! `write_private`), with the extension's origin; Settings lists each link
+//! and disconnects it.
 //!
 //! # Paired requests
 //!
@@ -86,7 +87,7 @@
 //! Nothing here is ever logged except ids, kinds and outcomes.
 
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::mpsc::{sync_channel, Receiver, SyncSender};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -294,10 +295,63 @@ fn is_request_id(id: &str) -> bool {
     !id.is_empty() && id.len() <= 100 && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
 }
 
+#[cfg(unix)]
+const PRIVATE_DIR_MODE: u32 = 0o700;
+#[cfg(unix)]
+const PRIVATE_FILE_MODE: u32 = 0o600;
+
+/// Saves the link records so that only this account can read them.
+///
+/// They must stay private even though they hold no token: each stored hash is
+/// also the key Hubble proves itself with (`proofs`), so whoever reads this
+/// file can answer `/v1/link/prove` as Hubble from a port Hubble isn't on,
+/// and the extension would then hand that program its token.
+///
+/// - macOS and Linux: a missing folder is created `0700` and the file is
+///   written `0600`. The temp file has those bits from the moment it exists,
+///   and is tightened again in case a temp left by an earlier version is
+///   reused (`mode` only applies to a file being created). A folder that
+///   already exists keeps its mode; the file's own mode keeps it private.
+/// - Windows: the path is `app_data_dir()` (lib.rs), which Tauri resolves to
+///   `FOLDERID_RoamingAppData\<identifier>`, i.e. `%APPDATA%\app.tabdump.desktop`.
+///   That folder inherits the user profile's ACL (this account, SYSTEM and
+///   Administrators), so other accounts can't read it and nothing extra is set.
+///
+/// Written beside, then renamed over: a crash mid-write never leaves half a file.
+fn write_private(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    let temp = path.with_extension("json.tmp");
+    #[cfg(unix)]
+    {
+        use std::io::Write;
+        use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
+        if let Some(parent) = path.parent() {
+            std::fs::DirBuilder::new().recursive(true).mode(PRIVATE_DIR_MODE).create(parent)?;
+        }
+        let mut file = std::fs::OpenOptions::new().write(true).create(true).truncate(true).mode(PRIVATE_FILE_MODE).open(&temp)?;
+        file.set_permissions(std::fs::Permissions::from_mode(PRIVATE_FILE_MODE))?;
+        file.write_all(bytes)?;
+    }
+    #[cfg(not(unix))]
+    {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(&temp, bytes)?;
+    }
+    std::fs::rename(&temp, path)
+}
+
 impl Link {
     /// Reads the saved links. A missing or unreadable file means no links —
     /// never an error that stops Hubble starting (the extension simply pairs again).
     pub fn load(path: PathBuf) -> Self {
+        // A file written before records were kept private may still be readable
+        // by other accounts; nothing rewrites it until the links change.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(PRIVATE_FILE_MODE));
+        }
         let links = std::fs::read(&path)
             .ok()
             .and_then(|bytes| serde_json::from_slice::<Vec<PairedLink>>(&bytes).ok())
@@ -311,15 +365,8 @@ impl Link {
 
     fn save(&self) {
         let Some(path) = &self.path else { return };
-        if let Some(parent) = path.parent() {
-            let _ = std::fs::create_dir_all(parent);
-        }
-        // Written beside, then renamed over: a crash mid-write never leaves half a file.
-        let temp = path.with_extension("json.tmp");
         if let Ok(bytes) = serde_json::to_vec_pretty(&self.links) {
-            if std::fs::write(&temp, bytes).is_ok() {
-                let _ = std::fs::rename(&temp, path);
-            }
+            let _ = write_private(path, &bytes);
         }
     }
 
@@ -840,6 +887,39 @@ mod tests {
         std::fs::write(&path, b"{ not json").unwrap();
         assert!(Link::load(path.clone()).list().is_empty());
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn saved_links_are_readable_by_this_account_only() {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = |path: &Path| std::fs::metadata(path).unwrap().permissions().mode() & 0o777;
+        let open_to_all = |path: &Path| std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o644)).unwrap();
+        let root = std::env::temp_dir().join(format!("hubble-link-test-{}", random_hex(6)));
+        let dir = root.join("app-data");
+        let path = dir.join("extension-links.json");
+        let temp = path.with_extension("json.tmp");
+        let now = Instant::now();
+
+        // The first save creates the folder and the file, owner-only.
+        let mut link = Link::load(path.clone());
+        paired(&mut link, now);
+        assert_eq!(mode(&dir), 0o700);
+        assert_eq!(mode(&path), 0o600);
+        assert!(!temp.exists());
+
+        // A temp file an earlier version left readable is not renamed into place as it was.
+        std::fs::write(&temp, b"[]").unwrap();
+        open_to_all(&temp);
+        paired(&mut link, now);
+        assert_eq!(mode(&path), 0o600);
+
+        // A file an earlier version saved readable is made private when Hubble starts.
+        open_to_all(&path);
+        let reloaded = Link::load(path.clone());
+        assert_eq!(mode(&path), 0o600);
+        assert_eq!(reloaded.list().len(), 1);
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]
