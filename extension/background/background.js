@@ -1402,8 +1402,13 @@ async function saveSession({ windowId, allWindows, name, workspaceId }) {
   const leftOut = { restricted, privateTabs, tooMany };
   if (tabs.length === 0) return { ok: false, error: "empty", leftOut };
   const answer = await askHubblePage("save-session", { tabs, ...(name ? { name } : {}), ...(workspaceId ? { workspaceId } : {}) }, { openIfMissing: true });
-  if (!answer.ok) return { ok: false, error: answer.error, leftOut };
+  if (!answer.ok) {
+    // The reason only (never a title or an address), so a failed save can be told apart in the worker's console.
+    log("session-save-failed", { error: answer.error, tabs: tabs.length });
+    return { ok: false, error: answer.error, leftOut };
+  }
   const saved = answer.result ?? {};
+  log("session-saved", { tabs: Number.isInteger(saved.tabs) ? saved.tabs : 0 });
   return {
     ok: true,
     session: { name: typeof saved.name === "string" ? saved.name : "", tabs: Number.isInteger(saved.tabs) ? saved.tabs : 0 },

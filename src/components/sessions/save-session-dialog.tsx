@@ -23,7 +23,7 @@ const plural = (count: number, one: string, many: string) => `${count} ${count =
 
 type ReadState =
   | { kind: "loading" }
-  | { kind: "unavailable"; desktop: boolean }
+  | { kind: "unavailable"; desktop: boolean; message: string }
   | { kind: "error"; message: string }
   | { kind: "ready"; windows: CapturableWindow[] }
 
@@ -44,7 +44,8 @@ function useChromeWindows(attempt: number): ReadState {
       } else if (reading.ok) {
         setState({ kind: "error", message: "Couldn't check which Chrome windows are private, so nothing was read." })
       } else if (reading.reason === "unavailable") {
-        setState({ kind: "unavailable", desktop: false })
+        // In Hubble Desktop the cause is the pairing or Chrome itself — never a missing install the website's ZIP would fix.
+        setState({ kind: "unavailable", desktop: reading.cause !== "no-extension", message: reading.message })
       } else {
         setState({ kind: "error", message: reading.reason === "declined" ? "Nothing was sent from Chrome." : (reading.message ?? "Chrome didn't send your tabs.") })
       }
@@ -167,7 +168,9 @@ function SaveSessionBody({
 
         {read.kind === "unavailable" &&
           (read.desktop ? (
-            <p className="text-body-sm text-muted-foreground">Sessions are saved from Chrome. Connect Hubble for Chrome in Settings → Chrome extension, or use Save session in its menu.</p>
+            <p role="alert" className="text-body-sm text-muted-foreground">
+              {read.message}
+            </p>
           ) : (
             <p className="text-body-sm text-muted-foreground">
               This needs{" "}

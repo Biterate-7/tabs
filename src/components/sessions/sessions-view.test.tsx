@@ -265,4 +265,64 @@ describe("Sessions in Hubble Desktop", () => {
     const dialog = await screen.findByRole("dialog")
     expect(within(dialog).getByText("Asking Chrome for your open tabs…")).toBeTruthy()
   })
+
+  /** Hubble Desktop's commands: the paired link answers `link(action)`; `paired` is whether a Hubble for Chrome is connected. */
+  function desktopLink(link: (action: string) => unknown, paired: boolean) {
+    ;(window as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {
+      invoke: async (command: string, args?: { action?: string }) => {
+        if (command === "desktop_link_command") return link(String(args?.action))
+        if (command === "desktop_link_paired") return paired
+        return undefined
+      },
+    }
+  }
+
+  it("says Hubble for Chrome isn't connected, and how to connect it, instead of asking to install it", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {})
+    desktopLink(() => ({ ok: false, error: "not-paired" }), false)
+    render(<SessionsView projects={[]} now={NOW} openSaveOnMount />)
+    const dialog = await screen.findByRole("dialog")
+    const alert = await within(dialog).findByRole("alert")
+    expect(alert.textContent).toMatch(/isn't connected to Hubble Desktop yet.*choose Connect/)
+    // Not the website's install prompt: Hubble for Chrome is installed, and its ZIP isn't served inside the app.
+    expect(within(dialog).queryByRole("link", { name: "Hubble for Chrome" })).toBeNull()
+    expect(within(dialog).getByRole("button", { name: "Try again" })).toBeTruthy()
+    vi.mocked(console.warn).mockRestore()
+  })
+
+  it("saves the tabs a paired Hubble for Chrome sends, and lists the session", async () => {
+    const user = userEvent.setup()
+    desktopLink(
+      (action) =>
+        action === "list_browser_tabs"
+          ? {
+              ok: true,
+              result: {
+                tabs: [
+                  { tabId: 1, windowId: 7, index: 0, url: "https://a.example/", title: "A", active: true, pinned: true },
+                  { tabId: 2, windowId: 7, index: 1, url: "chrome://settings/", title: "Settings", active: false, pinned: false },
+                  { tabId: 3, windowId: 7, index: 2, url: "https://b.example/", title: "B", active: false, pinned: false },
+                  { tabId: 4, windowId: 9, index: 0, url: "https://private.example/", title: "P", active: true, pinned: false },
+                ],
+              },
+            }
+          : { ok: true, result: { windows: [{ windowId: 7, focused: true, incognito: false, type: "normal" }, { windowId: 9, focused: false, incognito: true, type: "normal" }] } },
+      true
+    )
+    render(<SessionsView projects={[]} now={NOW} openSaveOnMount />)
+    const dialog = await screen.findByRole("dialog")
+    await within(dialog).findByText(/2 tabs will be saved\. 1 browser page/)
+    await user.clear(within(dialog).getByRole("textbox", { name: "Session name" }))
+    await user.type(within(dialog).getByRole("textbox", { name: "Session name" }), "From Chrome")
+    await user.click(within(dialog).getByRole("button", { name: "Save session" }))
+    await waitFor(() => expect(getSessionsSnapshot().sessions).toHaveLength(1))
+    const saved = getSessionsSnapshot().sessions[0]!
+    expect(saved.name).toBe("From Chrome")
+    // The private window's tab never comes in; the browser page is left out and counted.
+    expect(saved.tabs.map((tab) => [tab.url, tab.pinned === true])).toEqual([
+      ["https://a.example/", true],
+      ["https://b.example/", false],
+    ])
+    expect(await screen.findByRole("button", { name: "See the tabs in From Chrome" })).toBeTruthy()
+  })
 })
