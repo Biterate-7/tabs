@@ -74,8 +74,16 @@ describe("popup wording", () => {
   });
 
   it("never reports a failure as a success", () => {
-    for (const error of ["no-hubble-tab", "storage-failed", "project-missing", "empty", undefined]) {
+    for (const error of ["no-hubble-tab", "not-paired", "no-response", "window-unreadable", "storage-failed", "project-missing", "empty", undefined]) {
       expect(describeSaveFailure(error)).toMatch(/nothing was saved|no web pages|try again/i);
     }
+  });
+
+  it("says how to connect when Hubble for Chrome isn't paired with Hubble Desktop, not just that saving failed", () => {
+    const words = describeSaveFailure("not-paired");
+    expect(words).toMatch(/isn't connected to Hubble Desktop/);
+    // Names the popup's own button, so the person knows what to press.
+    expect(words).toContain("Connect to Hubble Desktop");
+    expect(words).not.toMatch(/^Couldn't save the session/);
   });
 });

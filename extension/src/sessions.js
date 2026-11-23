@@ -70,7 +70,12 @@ export function describeLeftOut({ restricted = 0, privateTabs = 0, tooMany = 0, 
   return parts.length === 0 ? "" : `Not saved: ${parts.join(", ")}.`;
 }
 
-/** What the popup says when a save didn't happen, from the reason the background or Hubble gave. */
+/**
+ * What the popup says when a save didn't happen, from the reason the
+ * background or Hubble gave. Sessions are stored by Hubble Desktop, reached
+ * over the paired link (desktop-link.js): without a connection nothing can
+ * be saved, so that reason says how to connect rather than "couldn't save".
+ */
 export function describeSaveFailure(error) {
   switch (error) {
     case "empty":
@@ -78,11 +83,16 @@ export function describeSaveFailure(error) {
       return "There are no web pages to save in this window.";
     case "private-window":
       return "Private windows aren't saved.";
+    case "not-paired":
+      return "Hubble for Chrome isn't connected to Hubble Desktop yet. Open Hubble Desktop, choose Connect to Hubble Desktop above and approve it there, then save again — nothing was saved.";
     case "no-hubble-tab":
     case "hubble-unreachable":
+      return "Couldn't open Hubble Desktop. Open it and try again — nothing was saved.";
     case "no-response":
     case "timeout":
-      return "Couldn't reach Hubble. Open Hubble and try again — nothing was saved.";
+      return "Hubble Desktop didn't answer. Try again in a moment — nothing was saved.";
+    case "window-unreadable":
+      return "Chrome wouldn't let Hubble read this window's tabs. Nothing was saved.";
     case "not-ready":
       return "Hubble is still loading. Try again in a moment — nothing was saved.";
     case "project-missing":
