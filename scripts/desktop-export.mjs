@@ -12,15 +12,20 @@
 //      extension/ into public/hubble-extension.zip) still runs. Skipping
 //      it would ship a desktop bundle whose extension-download link 404s.
 //
-//   3. It builds with webpack, not Turbopack. Google Fonts sometimes serves
+//   3. It builds with webpack, not Turbopack (and see 4). Google Fonts sometimes serves
 //      a family's files as `fonts.gstatic.com/l/font?kit=…&skey=…`, and
 //      Turbopack's next/font can't turn an address with its own query into
 //      an import ("next/font/google queries have exactly one entry") — it
 //      failed the macOS installer build on 2026-11-22 for Merriweather
 //      (src/app/layout.tsx) while the same commit built on Windows and Linux.
-//      webpack's next/font downloads any address, so the export no longer
-//      depends on which form Google happens to answer with. The website's
-//      own build (Vercel) is unchanged.
+//      The website's own build (Vercel) is unchanged.
+//
+//   4. webpack's next/font fails on the same addresses too (it reads the
+//      format from the address's extension: "Cannot read properties of null
+//      (reading '1')", macOS CI, 2026-11-24). So Google Fonts are fetched
+//      by scripts/google-fonts-local.cjs and given to next/font as local
+//      files named by their real format (NEXT_FONT_GOOGLE_MOCKED_RESPONSES,
+//      next/font's own hook). Same fonts, same Google request.
 //
 // next.config.ts reads TABDUMP_BUILD_TARGET and switches to
 // `output: "export"` — see the comment there for why that is sound for this
@@ -51,7 +56,10 @@ const child = spawn("npm", ["run", "build", "--", "--webpack"], {
   cwd: ROOT,
   stdio: "inherit",
   // HUBBLE_REQUIRE_MODEL: the desktop bundle must carry its on-device model (scripts/fetch-embedding-model.mjs).
-  env: { ...process.env, TABDUMP_BUILD_TARGET: "desktop", HUBBLE_REQUIRE_MODEL: "1" },
+  // NEXT_FONT_GOOGLE_MOCKED_RESPONSES: Google Fonts stylesheets and files are fetched by
+  // scripts/google-fonts-local.cjs and handed to next/font as local files, because next/font
+  // can't read the extension-less addresses some Google edges answer with (see google-fonts-fetch.mjs).
+  env: { ...process.env, TABDUMP_BUILD_TARGET: "desktop", HUBBLE_REQUIRE_MODEL: "1", NEXT_FONT_GOOGLE_MOCKED_RESPONSES: path.join(ROOT, "scripts", "google-fonts-local.cjs") },
   shell: process.platform === "win32",
 });
 
