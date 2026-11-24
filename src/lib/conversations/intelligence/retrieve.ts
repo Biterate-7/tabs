@@ -3,6 +3,7 @@ import { AI_PROVIDER_IDS, aiProviderName } from "@/lib/providers/registry";
 import { lexiconIdsIn } from "./extract";
 import { foldName } from "./lexicon";
 import type { AiProviderId } from "@/lib/providers/registry";
+import type { SemanticHits } from "./semantic-client";
 import type { ConversationIndex, ConversationRecord, ConversationThread, Evidence, Fact } from "./types";
 
 /**
@@ -27,9 +28,15 @@ import type { ConversationIndex, ConversationRecord, ConversationThread, Evidenc
  *              (they are about the same objective), marked as such
  *   time, app, project   filters, never scores
  *
- * There is no embedding model here: "semantic" reach comes from entity
- * resolution and threads, and the answer says what matched. When nothing
- * matches, the answer says so instead of offering the nearest thing.
+ *   meaning    when the on-device model runs (Compare by meaning), the
+ *              question's closeness to each conversation's best chunk
+ *              (`SemanticHits`, from the embedding worker) adds to the score,
+ *              and a clearly close conversation is found even with no shared
+ *              word — its closest message is the evidence shown
+ *
+ * Without the model, reach comes from entity resolution and threads, and the
+ * answer says what matched. When nothing matches, the answer says so instead
+ * of offering the nearest thing.
  */
 
 export type QueryFocus = "conversations" | "decisions" | "questions" | "tasks" | "accomplished" | "suggestions";
@@ -60,8 +67,9 @@ const PROVIDER_WORDS: { pattern: RegExp; provider: AiProviderId }[] = [
 const FOCUS: { focus: QueryFocus; pattern: RegExp }[] = [
   { focus: "suggestions", pattern: /\b(?:suggest(?:ed|ion|ions)?|recommend(?:ed|ation|ations)?|advi[cs]e|propos(?:ed|al|als))\b/i },
   { focus: "decisions", pattern: /\b(?:decid(?:e|ed)|decision|decisions|chose|choose|settled|agree(?:d)? on)\b/i },
-  { focus: "questions", pattern: /\b(?:unresolved|open questions?|still open|unanswered|not (?:yet )?(?:answered|solved|resolved)|remain(?:s|ing)? (?:open|unresolved))\b/i },
+  // Tasks before questions: "which tasks are still open?" asks for tasks; "still open" on its own means questions.
   { focus: "tasks", pattern: /\b(?:to-?dos?|tasks?|unfinished|follow[- ]?ups?|next steps?|need to do|left to do|pending)\b/i },
+  { focus: "questions", pattern: /\b(?:unresolved|open questions?|still open|unanswered|not (?:yet )?(?:answered|solved|resolved)|remain(?:s|ing)? (?:open|unresolved))\b/i },
   { focus: "accomplished", pattern: /\b(?:accomplish(?:ed)?|achiev(?:ed|ements?)|finished|completed|progress|got done|what have i done)\b/i },
 ];
 
@@ -73,6 +81,8 @@ const FILLER = new Set(
     "earlier", "before", "find", "show", "ai", "investigate", "investigated", "later", "across", "all", "remain", "remaining", "still", "question", "questions",
     "decide", "decided", "decision", "decisions", "suggest", "suggested", "suggestion", "recommend", "accomplish", "accomplished", "task", "tasks", "week", "month",
     "day", "days", "today", "yesterday", "last", "past", "recent", "recently", "open", "unresolved", "project", "work", "working", "feature", "problem", "thing",
+    // Pronouns and connectives say nothing about the subject ("…because they run out of RAM" matched any chat saying "they").
+    "they", "them", "their", "it", "its", "we", "our", "us", "you", "your", "he", "she", "his", "her", "because", "how", "why",
   ].flatMap((word) => textTerms(word).words.concat(word))
 );
 
@@ -136,6 +146,21 @@ export function parseQuery(text: string, now: number, projects: readonly { id: s
   return { text: query, terms, entities, providers, ...(laterProvider ? { laterProvider } : {}), ...readTime(query, now), workspaceIds, focus };
 }
 
+/**
+ * How closeness in meaning (the on-device model, when it runs) takes part in
+ * answering. Values from the earlier calibration on hand-labelled question
+ * sets (calibration + held-out); meaning finds and orders conversations, it
+ * is never on its own evidence of a fact.
+ */
+export const RETRIEVAL_CONFIG = {
+  /** A conversation this close is a match even with no shared word. */
+  semanticMatch: 0.3,
+  /** Below this, meaning adds nothing to a conversation's score. */
+  semanticFloor: 0.2,
+  /** Score added per unit of closeness above the floor. */
+  semanticWeight: 5,
+} as const;
+
 export type RankedConversation = {
   record: ConversationRecord;
   score: number;
@@ -179,6 +204,14 @@ function bestMessage(record: ConversationRecord, terms: readonly string[]): Evid
   return { recordId: record.id, messageIndex: message.index, role: message.role, quote: `${at > 0 ? "…" : ""}${message.text.slice(at, at + 220).replace(/\s+/g, " ").trim()}` };
 }
 
+/** The message the model found closest, when no word of the question is in the conversation. */
+function meaningEvidence(record: ConversationRecord, meaning: { score: number; messageIndex: number } | undefined): Evidence | undefined {
+  if (!meaning || meaning.messageIndex < 0 || meaning.score < RETRIEVAL_CONFIG.semanticMatch) return undefined;
+  const message = record.messages[meaning.messageIndex];
+  if (!message) return undefined;
+  return { recordId: record.id, messageIndex: message.index, role: message.role, quote: message.text.slice(0, 220).replace(/\s+/g, " ").trim() };
+}
+
 const FOLLOW_UP_LIMIT = 30;
 
 // What every query over one index needs, worked out once per index: it is rebuilt only when the corpus changes.
@@ -205,8 +238,9 @@ function titleWordsOf(record: ConversationRecord): Set<string> {
   return words;
 }
 
-export function answerQuery(index: ConversationIndex, query: ParsedQuery, options: { limit?: number } = {}): QueryAnswer {
+export function answerQuery(index: ConversationIndex, query: ParsedQuery, options: { limit?: number; semantic?: SemanticHits } = {}): QueryAnswer {
   const limit = options.limit ?? 12;
+  const semantic = options.semantic;
   const { analyzed, df, recordById, threadsOf } = prepare(index);
   const total = analyzed.length;
   const passes = (record: ConversationRecord) =>
@@ -237,6 +271,13 @@ export function answerQuery(index: ConversationIndex, query: ParsedQuery, option
       if (named.length > 0) why.push(`names ${named.map((entity) => entity.name).join(", ")}`);
       // Every word of the subject found counts for more than one word found many times.
       if (query.terms.length > 1) score *= 0.5 + (0.5 * matched.length) / query.terms.length;
+      const meaning = semantic?.get(record.id);
+      if (meaning && meaning.score > RETRIEVAL_CONFIG.semanticFloor) {
+        score += (meaning.score - RETRIEVAL_CONFIG.semanticFloor) * RETRIEVAL_CONFIG.semanticWeight;
+        if (meaning.score >= RETRIEVAL_CONFIG.semanticMatch) why.push(`close in meaning (${Math.round(meaning.score * 100)}%)`);
+      }
+      // Meaning alone admits a conversation only when it is clearly close; a loose resemblance only reorders.
+      if (matched.length === 0 && named.length === 0 && (!meaning || meaning.score < RETRIEVAL_CONFIG.semanticMatch)) continue;
       if (score <= 0) continue;
     } else {
       score = 1;
@@ -332,7 +373,11 @@ export function answerQuery(index: ConversationIndex, query: ParsedQuery, option
   const conversations = ranked
     .filter((entry) => passes(entry.record))
     .slice(0, limit)
-    .map((entry) => (subject && !entry.evidence && entry.why[0]?.startsWith("same thread") !== true ? { ...entry, evidence: bestMessage(entry.record, query.terms) } : entry));
+    .map((entry) => {
+      if (!subject || entry.evidence || entry.why[0]?.startsWith("same thread") === true) return entry;
+      const evidence = bestMessage(entry.record, query.terms) ?? meaningEvidence(entry.record, semantic?.get(entry.record.id));
+      return evidence ? { ...entry, evidence } : entry;
+    });
   const enough = query.focus === "conversations" ? conversations.length > 0 && (!subject || conversations[0]!.score >= 1) : factsOut.length > 0;
   return { query, conversations, facts: factsOut.slice(0, 30), threads: threadsHit, summary: summarize(query, conversations, factsOut, enough, index), enough };
 }
@@ -372,10 +417,10 @@ function summarize(query: ParsedQuery, conversations: readonly RankedConversatio
  * the new task's words (or a project's) name, best first. Used when a
  * conversation or project is opened, never pushed as a notification.
  */
-export function relevantConversations(index: ConversationIndex, text: string, now: number, exclude: ReadonlySet<string> = new Set(), limit = 5): RankedConversation[] {
+export function relevantConversations(index: ConversationIndex, text: string, now: number, exclude: ReadonlySet<string> = new Set(), limit = 5, semantic?: SemanticHits): RankedConversation[] {
   const query = parseQuery(text, now);
   if (query.terms.length === 0 && query.entities.length === 0) return [];
-  return answerQuery(index, { ...query, focus: "conversations", providers: [], workspaceIds: [] }, { limit: limit + exclude.size })
+  return answerQuery(index, { ...query, focus: "conversations", providers: [], workspaceIds: [] }, { limit: limit + exclude.size, ...(semantic ? { semantic } : {}) })
     .conversations.filter((entry) => !exclude.has(entry.record.id) && entry.score >= 1.5)
     .slice(0, limit);
 }

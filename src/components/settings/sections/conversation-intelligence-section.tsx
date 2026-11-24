@@ -6,6 +6,8 @@ import { Button } from "@/components/ui/button"
 import { Switch } from "@/components/ui/switch"
 import { ProviderMark } from "@/components/memory/provider-mark"
 import { FieldRow, GroupBlock, GroupLabel, SectionHeading, SectionStack } from "./section-ui"
+import { IntelligenceStatusPanel } from "./intelligence-status"
+import { errorMessage } from "@/lib/conversations/intelligence/diagnostics"
 import { DEFAULT_INTELLIGENCE_SETTINGS, isProviderAnalyzed, loadIntelligenceSettings, saveIntelligenceSettings, setProviderAnalyzed } from "@/lib/conversations/intelligence/settings"
 import { EMBEDDING_MODEL } from "@/lib/conversations/intelligence/semantic"
 import { EMBEDDINGS, clearDerived, derivedOwner, derivedSize } from "@/lib/conversations/intelligence/store"
@@ -39,22 +41,31 @@ export function ConversationIntelligenceSection({ onOpenAiApps }: { onOpenAiApps
   const corrections = Object.keys(settings.facts).length + settings.unrelated.length + settings.related.length + settings.dismissed.length
   // What Hubble keeps on this device from its analysis — shown so the person can see it, and delete the vectors.
   const [stored, setStored] = useState<{ extractions: number; embeddings: number; bytes: number } | null>(null)
+  const [storedError, setStoredError] = useState<string | null>(null)
   const [refresh, setRefresh] = useState(0)
+  // Read once per mount: the panel's own clock, not the shell's.
+  const [now] = useState(() => Date.now())
   useEffect(() => {
     let cancelled = false
     derivedSize(derivedOwner())
       .then((size) => {
         if (!cancelled) setStored(size)
       })
-      .catch(() => undefined)
+      .catch((error) => {
+        if (!cancelled) setStoredError(errorMessage(error))
+      })
     return () => {
       cancelled = true
     }
   }, [refresh])
   const forgetVectors = async () => {
-    await clearDerived(EMBEDDINGS, derivedOwner()).catch(() => 0)
+    try {
+      await clearDerived(EMBEDDINGS, derivedOwner())
+      toast.success("Deleted the stored meaning data.")
+    } catch (error) {
+      toast.error(`Couldn't delete the meaning data: ${errorMessage(error)}`)
+    }
     setRefresh((value) => value + 1)
-    toast.success("Deleted the stored meaning data.")
   }
 
   return (
@@ -70,14 +81,16 @@ export function ConversationIntelligenceSection({ onOpenAiApps }: { onOpenAiApps
         </FieldRow>
         <FieldRow
           label="Compare by meaning"
-          description={`Links conversations about the same thing even when they use different words. Hubble downloads a small model (${EMBEDDING_MODEL.name}, about ${EMBEDDING_MODEL.approxDownloadMB} MB) from Hugging Face once and runs it on this device — your conversations are never sent anywhere. Not available in the desktop app yet.`}
+          description={`Links conversations about the same thing even when they use different words, and answers questions by meaning. A small model (${EMBEDDING_MODEL.name}, about ${EMBEDDING_MODEL.approxDownloadMB} MB) comes with Hubble and runs on this device — nothing is downloaded, and your conversations are never sent anywhere.`}
         >
           <Switch aria-label="Compare conversations by meaning" checked={settings.semantic} disabled={!settings.enabled} onCheckedChange={(checked) => update({ ...settings, semantic: checked })} />
         </FieldRow>
         <FieldRow
           label="Kept on this device"
           description={
-            stored === null
+            storedError
+              ? `Couldn't read what's kept: ${storedError}`
+              : stored === null
               ? "Checking…"
               : `Analysis of ${stored.extractions} conversation${stored.extractions === 1 ? "" : "s"}${stored.embeddings > 0 ? `, meaning data for ${stored.embeddings}` : ""} — about ${Math.max(1, Math.round(stored.bytes / 1024))} KB. Kept so unchanged conversations are never analysed twice; deleted with their conversations.`
           }
@@ -87,6 +100,8 @@ export function ConversationIntelligenceSection({ onOpenAiApps }: { onOpenAiApps
           </Button>
         </FieldRow>
       </SectionStack>
+
+      <IntelligenceStatusPanel semanticOn={settings.enabled && settings.semantic} now={now} />
 
       <GroupLabel className="mt-6">By AI app</GroupLabel>
       <SectionStack>

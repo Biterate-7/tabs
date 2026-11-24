@@ -3,9 +3,9 @@
   "version": "0.2.0",
   "private": true,
   "scripts": {
-    "predev": "node scripts/copy-pdfjs-assets.mjs && node scripts/copy-ort-assets.mjs && node scripts/build-embedding-worker.mjs",
+    "predev": "node scripts/copy-pdfjs-assets.mjs && node scripts/copy-ort-assets.mjs && node scripts/build-embedding-worker.mjs && node scripts/fetch-embedding-model.mjs",
     "dev": "next dev",
-    "prebuild": "node scripts/build-extension-zip.mjs && node scripts/copy-pdfjs-assets.mjs && node scripts/copy-ort-assets.mjs && node scripts/build-embedding-worker.mjs",
+    "prebuild": "node scripts/build-extension-zip.mjs && node scripts/copy-pdfjs-assets.mjs && node scripts/copy-ort-assets.mjs && node scripts/build-embedding-worker.mjs && node scripts/fetch-embedding-model.mjs",
     "build": "next build",
     "start": "next start",
     "lint": "eslint",

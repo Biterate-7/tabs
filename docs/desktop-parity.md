@@ -51,6 +51,9 @@ settings), not from a wish list.
 | **Organize open tabs**, Add → Browser tabs | Through the page | Over the paired link (`readChromeTabs`) | Unit (`open-tabs-organize.test.tsx`) | — |
 | Link command security | — | Token + extension origin on collect and answer; allowlist of 13 actions re-validated by the extension; per-link answering; capped args, queue and TTL; wake carries nothing | Unit: 6 Rust tests (`extension_link.rs`, `import_bridge.rs`), `link-protocol.test.ts` parity, `desktop-link.test.js`, `desktop-commands.test.js` | Live CDP/real-Chrome run not done for the link |
 | Theme / appearance | ✓ | ✓ | CDP: persists across restart | — |
+| **Conversation intelligence: background analysis + backfill** | n/a (web app retired) | Every project analysed after start-up, no view open; resumable runs, failures with reasons | 2026-11-23 QA build on a copy of a real install: v1 cache upgraded in place, 1 existing analysis kept; 4 conversations imported via Import projects analysed in 1.5 s; hard kill + relaunch → 5 read back, 0 redone | — |
+| **Compare by meaning / questions by meaning** | n/a | Bundled model, no network | Same build: model loaded from the bundle (≈2.1 s debug), 5 conversations embedded, meaning-only question found the right chat (53%), unrelated question found nothing; vectors survived a hard kill (0 re-embedded) | Release-profile timing not measured |
+| **Where you left off** | n/a | ✓ | Same build: section rendered with projects / still open / decided | Copy for an AI chat not clicked in the app (unit-tested) |
 | Export / import projects | Download / file input | Native Save dialog / file input | Unit; 2026-10-18 audit | — |
 
 ## Found and fixed during verification

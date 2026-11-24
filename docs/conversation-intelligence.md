@@ -44,8 +44,12 @@ built on top.
 | Questions → answers | `retrieve.ts` (`parseQuery`, `answerQuery`, `relevantConversations`) |
 | Thread write-up for an AI chat | `context.ts` (`threadContext`) |
 | The person's settings and corrections | `settings.ts` (`tabdump:conversation-intelligence:v1`, scoped) |
-| Background processing, cache, two-stage index | `src/hooks/use-conversation-intelligence.ts` |
-| On-device cache of derived data (extractions, vectors) | `store.ts` (IndexedDB `hubble-intelligence`) |
+| The one processor (extraction, vectors, search by meaning) | `src/hooks/use-intelligence-processor.ts`; app-wide via `IntelligenceProvider` (mounted by AppShell) |
+| Historical backfill: plan, slices, checkpoints, failures | `backfill.ts` (§13) |
+| Two-stage index for a view | `src/hooks/use-conversation-intelligence.ts` |
+| On-device cache of derived data (extractions, vectors, failures, last run) | `store.ts` (IndexedDB `hubble-intelligence`, version 2) |
+| What the system is doing: log + live status | `diagnostics.ts`, Settings → Conversations → **Processing** (§14) |
+| "Where you left off" | `reconstruct.ts`, `src/components/conversations/where-you-left-off.tsx` (§15) |
 | Meaning: chunks, vectors, neighbours | `semantic.ts` (pure), `embedding.worker.ts` (model), `semantic-client.ts` (page side) |
 | "Why are these related?" — closest messages | `explain.ts` |
 | Checking links on real history | `review.ts`, `src/components/conversations/link-review.tsx` |
@@ -143,17 +147,18 @@ thread as …"), returns the best-matching message as evidence, and answers
 "Nothing in your N analysed conversations … answers this" rather than the
 nearest thing. Per-index work (document frequencies, thread lookup) is done
 once per index; a "later discussed with" query checks suggestions newest
-first and stops once an answer is full. Question answering is still by
-words and names — meaning is used for relations, not yet for questions.
+first and stops once an answer is full. With "Compare by meaning" on and
+the model ready, questions are also answered by meaning (§9).
 
 ## 6. Privacy, security, deletion
 
 - Analysis runs on this device. No conversation text is sent to any AI app
   or server; no new route exists. The extension and its permissions are
-  unchanged. With "Compare by meaning" on, the one network request is the
-  model itself (huggingface.co and its CDN, once, then the browser cache);
-  the ONNX runtime and the worker are served by Hubble (`public/ort`,
-  `public/workers`, generated on dev/build) — no third-party code runs.
+  unchanged. "Compare by meaning" makes **no network request**: the model
+  (pinned revision, SHA-256-checked by `scripts/fetch-embedding-model.mjs`),
+  the ONNX runtime and the worker are all served by Hubble (`public/models`,
+  `public/ort`, `public/workers`, generated on dev/build and bundled into
+  the desktop app); the worker turns remote model loading off.
 - Derived data (extractions, vectors) is cached in IndexedDB
   `hubble-intelligence`, keyed exactly like the text in the content store
   (`<account>|<project>|<item>`). The content store's own deletion paths
@@ -216,9 +221,28 @@ cross-origin isolated). Each conversation is a gist (title + the person's
 words) plus up to 9 prose windows (code removed); the conversation vector is
 half gist, half the mean of the windows. Vectors are kept as int8.
 
-Unavailable — and Hubble says so and links by words — where workers or
-WebAssembly can't run, and in the desktop app: its CSP allows neither the
-model host nor `wasm-unsafe-eval`, and that was left unchanged.
+Works in Hubble Desktop (verified 2026-11-23 in the real WebView2 build:
+model loaded from the bundle in ≈2.1 s in a debug build, conversations
+embedded, questions answered by meaning). The desktop CSP is unchanged: it
+applies to the page, and the worker — served without one — needs no remote
+host. `desktop:export` fails if the model can't be staged
+(`HUBBLE_REQUIRE_MODEL=1`), so no desktop bundle ships without it.
+
+`env.localModelPath` must stay root-relative (`"/models/"`): with a full
+URL, transformers.js 4.3 reports `tokenizer_config.json` missing, builds the
+pipeline without a tokenizer, and every embedding fails with "this.tokenizer
+is not a function" (found on desktop; pinned by `diagnostics.test.ts`).
+Where workers or WebAssembly can't run, or the model files are missing,
+Hubble says so, with the reason, and links and answers by words.
+
+**Questions by meaning.** With the model ready, a question is embedded in
+the worker and each conversation scores its best chunk (`searchEmbeddings`);
+`answerQuery` adds `(closeness − 0.2) × 5` to a word match's score and
+admits a conversation with no shared word only at closeness ≥ 0.3, quoting
+its closest message. Words answer at once; the meaning pass refines the
+answer when it returns. Without the model the answer is exactly the
+words-only one (tested). When every vector is current the model isn't loaded
+until a question needs it (status "idle").
 
 ## 10. Measured (2026-11-01)
 
@@ -280,6 +304,14 @@ on QA data.
 npx vitest run src/lib/conversations/intelligence src/components/conversations src/hooks/use-conversation-intelligence.test.tsx src/lib/knowledge-graph/conversation-links.test.ts
 ```
 
+Added 2026-11-23: `backfill.test.ts` (plan states, idempotence,
+cancel/resume, crash recovery, failures with reasons and no text, retries,
+write/read failures, v1→v2 upgrade, 1,500-conversation scale, concurrent
+runs), `reconstruct.test.ts`, `retrieve-semantic.test.ts`,
+`diagnostics.test.ts`, `intelligence-provider.test.tsx` (background run,
+restart reads back, settings followed). `bench/semantic-search.perf.ts`
+runs the real bundled model offline in Node.
+
 Benchmarks (the quality run downloads the model once into `.bench-cache`):
 
 ```bash
@@ -291,3 +323,59 @@ conversations (ChatGPT, Claude, Perplexity, Gemini) in three projects —
 overview, ask, thread, detail, messages, related, Settings, Graph (galaxy and
 list/inspector), 390px with no horizontal overflow. Not checked against a
 person's real saved history.
+
+## 13. Background processing and the historical backfill
+
+`IntelligenceProvider` (AppShell) runs one processor for **every** project
+from start-up — 1.5 s after the app settles and after each change to the
+projects — so conversations saved before Hubble could read them, or while it
+was closed, are analysed without opening any view. Views share it.
+
+A run (`runBackfill`): **plan** every conversation (current, missing,
+changed, outdated extractor, retry, given up; skipped as analysis-off,
+app-off, left out, saved without text, unreadable, *text missing* — the
+project says text was saved but the content store has none — or project not
+loaded yet); **process** what needs it in slices of 400k characters,
+yielding between slices; **commit** each slice in one IndexedDB transaction
+(3 retries with backoff); **checkpoint** the counts after every slice in
+store `runs`; **report**. Idempotent (keyed like the text, stamped with
+fingerprint and extractor version); a cancelled or killed run loses at most
+one slice, and the next one says it resumed. Existing analysis is replaced
+only when its conversation or the extractor changed.
+
+Failures are stored per conversation (`failures`: stage, code, the error's
+own message, attempts, first/last time — never text), retried on the next
+runs up to 3 times per save, reset by a new save or **Retry failed**, and
+cleared by a success. A cache that can't be read or written is reported
+(`cacheError`, `unsaved`), never hidden; the analysis is still used for
+the session.
+
+Relations, threads and the graph's inferred edges are not stored: they are
+rebuilt from the stored analysis on load, so they cannot go missing on their
+own and are identical after a restart.
+
+## 14. Diagnostics
+
+`diagnostics.ts` keeps the newest 300 structured events (kind, event,
+message, small data — counts, ids, durations, codes; strings bounded; never
+titles or text) and a live status (running, last report, model state and
+load time, storage). Warnings and errors also go to the console as
+`[hubble:intelligence] kind/event`; info events too with
+`localStorage["hubble:debug-intelligence"] = "1"`. Readable from DevTools as
+`hubbleIntelligence.status()` / `.events()`. Settings → Conversations →
+**Processing** shows the last run (found, analysed, failed, skipped and why,
+duplicates, unsaved, backlog, time and rate), vector coverage, the model's
+state with its reason, storage, each failure with its reason, recent
+warnings, and **Process now** / **Retry failed**.
+
+## 15. Where you left off
+
+`reconstructContext(index, workspaces, now)` rebuilds the picture from what
+is stored: projects by recent activity (sources and conversations, 14-day
+half-life; open work counts only as much as it is recent), open tasks and
+questions (old ones marked "needs a look"), the person's decisions (not AI
+suggestions; superseded ones left out), recent topics, threads,
+conversations worth going back to, and the sources saved beside the most
+active projects. Every entry is marked current (≤ 14 days) or earlier. Shown
+at the top of Conversations, with **Copy for an AI chat**
+(`reconstructionText`: quoted, sourced, framed as reference).

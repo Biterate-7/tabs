@@ -61,3 +61,5 @@ next-env.d.ts
 /public/ort
 # built from src/lib/conversations/intelligence/embedding.worker.ts on dev/build (see scripts/build-embedding-worker.mjs)
 /public/workers
+# The on-device embedding model, copied by scripts/fetch-embedding-model.mjs
+/public/models

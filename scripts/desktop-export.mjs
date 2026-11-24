@@ -50,7 +50,8 @@ const MISPLACED_EXPORT = [
 const child = spawn("npm", ["run", "build", "--", "--webpack"], {
   cwd: ROOT,
   stdio: "inherit",
-  env: { ...process.env, TABDUMP_BUILD_TARGET: "desktop" },
+  // HUBBLE_REQUIRE_MODEL: the desktop bundle must carry its on-device model (scripts/fetch-embedding-model.mjs).
+  env: { ...process.env, TABDUMP_BUILD_TARGET: "desktop", HUBBLE_REQUIRE_MODEL: "1" },
   shell: process.platform === "win32",
 });
 
