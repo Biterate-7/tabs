@@ -15,6 +15,7 @@ import { LibraryView } from "@/components/library/library-view"
 import { AiView } from "@/components/ai/ai-view"
 import { ConversationsView } from "@/components/conversations/conversations-view"
 import { ConversationAwareGraph } from "@/components/conversations/conversation-aware-graph"
+import { IntelligenceProvider } from "@/components/conversations/intelligence-provider"
 import { useBrowserConnected } from "@/hooks/use-tab-sessions"
 import type { AiProviderId } from "@/lib/providers/registry"
 import { FavoritesView } from "@/components/workspace/favorites-view"
@@ -2179,6 +2180,7 @@ export function AppShell() {
   const captureWorkspace = capture ? store.workspaces.find((workspace) => workspace.id === capture.workspaceId) : undefined
 
   return (
+    <IntelligenceProvider workspaces={store.workspaces}>
     <CommandPaletteHostContext.Provider value={paletteHost}>
     <ProjectActionsProvider value={projectActions}>
     <MemoryActionsProvider value={memoryActions}>
@@ -2349,6 +2351,7 @@ export function AppShell() {
     </MemoryActionsProvider>
     </ProjectActionsProvider>
     </CommandPaletteHostContext.Provider>
+    </IntelligenceProvider>
   )
 }
 

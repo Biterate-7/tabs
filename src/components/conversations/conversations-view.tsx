@@ -1,6 +1,6 @@
 "use client"
 
-import { useMemo, useState } from "react"
+import { useMemo, useRef, useState } from "react"
 import type { ReactNode } from "react"
 import { ArrowRight, ChevronDown, Search, Settings2 } from "lucide-react"
 import { toast } from "sonner"
@@ -13,6 +13,8 @@ import { ConversationDetail } from "./conversation-detail"
 import { LinkReview } from "./link-review"
 import { FactRow, InsightCard } from "./parts"
 import { ThreadView } from "./thread-view"
+import { WhereYouLeftOff } from "./where-you-left-off"
+import { logIntelligence } from "@/lib/conversations/intelligence/diagnostics"
 import { useConversationIntelligence } from "@/hooks/use-conversation-intelligence"
 import { answerQuery, parseQuery } from "@/lib/conversations/intelligence/retrieve"
 import { closestMessages } from "@/lib/conversations/intelligence/explain"
@@ -108,13 +110,27 @@ export function ConversationsView({
   }
   const open = (recordId: string, evidence?: Evidence) => setSelection({ kind: "record", id: recordId, ...(evidence ? { focus: evidence.messageIndex } : {}) })
 
+  // Words answer at once; when the on-device model is ready, the answer is refined by meaning (a newer question wins).
+  const asked = useRef(0)
   const ask = (text: string) => {
     const trimmed = text.trim()
+    const id = ++asked.current
     if (!trimmed) {
       setAnswer(undefined)
       return
     }
-    setAnswer(answerQuery(index, parseQuery(trimmed, now, projects)))
+    const started = performance.now()
+    const parsed = parseQuery(trimmed, now, projects)
+    const byWords = answerQuery(index, parsed)
+    setAnswer(byWords)
+    logIntelligence({ level: "info", kind: "search", event: "words", data: { ms: Math.round(performance.now() - started), conversations: byWords.conversations.length, facts: byWords.facts.length, enough: byWords.enough } })
+    if (!settings.semantic || semanticStatus.state !== "ready") return
+    void intelligence.searchByMeaning(trimmed).then((hits) => {
+      if (!hits || id !== asked.current) return
+      const hybrid = answerQuery(index, parsed, { semantic: hits })
+      logIntelligence({ level: "info", kind: "search", event: "hybrid", data: { meaningHits: hits.size, conversations: hybrid.conversations.length, enough: hybrid.enough } })
+      setAnswer(hybrid)
+    })
   }
 
   const shown = useMemo(() => {
@@ -240,6 +256,8 @@ export function ConversationsView({
             </button>
           )}
         </p>
+
+        {settings.enabled && <WhereYouLeftOff index={index} workspaces={workspaces} now={now} workspaceName={workspaceName} onOpen={open} />}
 
         {insights.length > 0 && (
           <section aria-label="Worth a look">

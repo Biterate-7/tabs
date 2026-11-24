@@ -1,4 +1,4 @@
-import { EMBEDDING_KEY, EMBEDDING_MODEL, conversationVector, quantize, updateNeighbors } from "./semantic";
+import { EMBEDDING_KEY, EMBEDDING_MODEL, conversationVector, quantize, searchEmbeddings, updateNeighbors } from "./semantic";
 import { EMBEDDINGS, clearDerived, readDerived, writeDerived } from "./store";
 import type { NeighborMap, SemanticEntry } from "./semantic";
 import type { CachedEmbedding } from "./store";
@@ -10,9 +10,11 @@ import type { EmbeddingRequest, EmbeddingResponse, EmbedItem } from "./semantic-
  * nearest others up to date.
  *
  * Only text the page hands over is embedded, and nothing leaves the device:
- * the one network request is the model itself (from Hugging Face, once,
- * then from the browser's cache), and the ONNX runtime is served by Hubble
- * (scripts/copy-ort-assets.mjs). Vectors are stored in the account's
+ * the model is served by Hubble itself (scripts/fetch-embedding-model.mjs
+ * puts a pinned, hash-checked copy in public/models, which the desktop app
+ * bundles), remote model downloads are switched off, and the ONNX runtime
+ * is served by Hubble too (scripts/copy-ort-assets.mjs). No network request
+ * is made; a missing model is reported as unavailable, with why. Vectors are stored in the account's
  * derived-data cache (./store.ts) and deleted with their conversations.
  *
  * Unchanged conversations are never embedded again (same fingerprint and
@@ -32,8 +34,18 @@ function post(message: EmbeddingResponse) {
 }
 
 async function loadModel(): Promise<Extractor> {
+  const started = performance.now();
   const { env, pipeline } = await import("@huggingface/transformers");
-  env.allowLocalModels = false;
+  // Hubble's own copy only: never a download from a model hub at run time.
+  env.allowRemoteModels = false;
+  env.allowLocalModels = true;
+  // Root-relative, never a full URL: transformers.js 4 only checks that a local file exists (tokenizer_config.json
+  // decides whether a tokenizer loads at all) when the path is not an http(s) URL — with one, the pipeline is built
+  // without a tokenizer and fails on first use ("this.tokenizer is not a function"). A relative path is fetched
+  // against this worker's own origin, so it is still Hubble's copy.
+  env.localModelPath = "/models/";
+  // The files are already local; a second copy in the Cache API would only double the space.
+  env.useBrowserCache = false;
   const onnx = env.backends.onnx as { wasm?: { wasmPaths?: unknown; numThreads?: number } };
   if (onnx.wasm) {
     onnx.wasm.wasmPaths = { mjs: new URL("/ort/ort-wasm-simd-threaded.mjs", scope.location.origin).href, wasm: new URL("/ort/ort-wasm-simd-threaded.wasm", scope.location.origin).href };
@@ -46,6 +58,7 @@ async function loadModel(): Promise<Extractor> {
       if (progress.status === "progress" && progress.total) post({ type: "status", state: "loading-model", done: progress.loaded ?? 0, total: progress.total });
     },
   });
+  post({ type: "model", source: `bundled ${EMBEDDING_MODEL.id}`, loadMs: Math.round(performance.now() - started) });
   return loaded as unknown as Extractor;
 }
 
@@ -59,6 +72,8 @@ function model(): Promise<Extractor> {
 
 // What this worker knows, per account: entries and neighbours, so a sync after a small change is a small update.
 let state: { owner: string; entries: Map<string, { fingerprint: string; entry: SemanticEntry }>; neighbors: NeighborMap } | null = null;
+// Every current conversation's chunk vectors, for answering a question by meaning: recordId → its cached embedding.
+let searchable: { owner: string; byRecord: Map<string, CachedEmbedding> } | null = null;
 
 type Run = {
   generation: number;
@@ -148,13 +163,16 @@ async function work(current: Run) {
 function finish(current: Run, final = true) {
   const entries: SemanticEntry[] = [];
   const next = new Map<string, { fingerprint: string; entry: SemanticEntry }>();
+  const byRecord = new Map<string, CachedEmbedding>();
   for (const [key, item] of current.items) {
     const hit = current.cached.get(key);
     if (!hit || hit.fingerprint !== item.fingerprint) continue;
     const entry = { recordId: item.recordId, vector: hit.conversation };
     entries.push(entry);
     next.set(item.recordId, { fingerprint: item.fingerprint, entry });
+    byRecord.set(item.recordId, hit);
   }
+  searchable = { owner: current.owner, byRecord };
   // An update from what this worker last computed, when it can.
   const changed = new Set<string>();
   const previous = state && state.owner === current.owner ? state : null;
@@ -170,8 +188,30 @@ function finish(current: Run, final = true) {
   if (final) post({ type: "status", state: "ready", done: entries.length, total: current.items.size });
 }
 
+/**
+ * A question's closest conversations by meaning: the question is embedded
+ * like a chunk, and each conversation scores its best chunk (or its own
+ * vector, if higher). Only conversations this worker has current vectors
+ * for take part.
+ */
+async function search(request: Extract<EmbeddingRequest, { type: "search" }>) {
+  const started = performance.now();
+  try {
+    const extract = await model();
+    const [vector] = (await extract([request.text.slice(0, 2_000)], { pooling: "mean", normalize: true })).tolist();
+    const hits = vector && searchable && searchable.owner === request.owner ? searchEmbeddings(vector, searchable.byRecord, request.floor) : [];
+    post({ type: "search-result", id: request.id, hits: hits.slice(0, request.limit), searched: searchable?.owner === request.owner ? searchable.byRecord.size : 0, ms: Math.round(performance.now() - started) });
+  } catch (error) {
+    post({ type: "search-error", id: request.id, message: error instanceof Error ? error.message : String(error) });
+  }
+}
+
 scope.onmessage = (event: MessageEvent<EmbeddingRequest>) => {
   const request = event.data;
+  if (request.type === "search") {
+    void search(request);
+    return;
+  }
   if (request.type === "sync") {
     void sync(request).catch((error) => post({ type: "status", state: "unavailable", done: 0, total: 0, message: error instanceof Error ? error.message : String(error) }));
   } else if (request.type === "chunks") {
@@ -183,6 +223,7 @@ scope.onmessage = (event: MessageEvent<EmbeddingRequest>) => {
   } else if (request.type === "forget") {
     run = null;
     state = null;
+    searchable = null;
     void clearDerived(EMBEDDINGS, request.owner).then(() => post({ type: "forgotten" }));
   }
 };

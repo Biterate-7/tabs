@@ -22,7 +22,7 @@ import type { FactStatus, RelationLevel } from "./types";
  *                  the precision figures are computed from, on this device
  *   dismissed      insights the person closed
  *   semantic       compare conversations by meaning with an on-device model
- *                  (off until the person turns it on: it downloads the model)
+ *                  (off until the person turns it on; the model ships with Hubble)
  *
  * Partitioned by account (SCOPED_STORAGE_KEYS). Turning analysis off never
  * deletes a saved conversation — deleting one is done on the conversation
@@ -150,14 +150,27 @@ export function loadIntelligenceSettings(): IntelligenceSettings {
   }
 }
 
+const settingsListeners = new Set<(settings: IntelligenceSettings) => void>();
+
+/**
+ * Called with the new settings whenever this page saves them — the
+ * background processor follows the person's choices (analysis off, an app
+ * left out, meaning on) wherever they were made.
+ */
+export function onIntelligenceSettingsSaved(listener: (settings: IntelligenceSettings) => void): () => void {
+  settingsListeners.add(listener);
+  return () => settingsListeners.delete(listener);
+}
+
 /** Writes the settings; says whether it could. */
 export function saveIntelligenceSettings(settings: IntelligenceSettings): boolean {
   try {
     window.localStorage.setItem(scopedKey(CONVERSATION_INTELLIGENCE_KEY), JSON.stringify(settings));
-    return true;
   } catch {
     return false;
   }
+  for (const listener of settingsListeners) listener(settings);
+  return true;
 }
 
 /** A pair of conversations, the same whichever way round. */

@@ -201,6 +201,34 @@ export function updateNeighbors(previous: NeighborMap, entries: readonly Semanti
   return out;
 }
 
+/**
+ * A question's closest conversations: each scores its best chunk (int8
+ * vectors, unit × 127) or its own vector, whichever is higher, and keeps the
+ * message that chunk came from (-1: the gist or the whole). Best first;
+ * below `floor` left out. The embedding worker answers "search" with this.
+ */
+export function searchEmbeddings(
+  query: ArrayLike<number>,
+  entries: Iterable<[recordId: string, entry: { conversation: ArrayLike<number>; chunks: readonly { messageIndex: number }[]; vectors: Int8Array }]>,
+  floor: number,
+  dims: number = EMBEDDING_MODEL.dims
+): [recordId: string, score: number, messageIndex: number][] {
+  const hits: [string, number, number][] = [];
+  for (const [recordId, entry] of entries) {
+    let best = dot(query, entry.conversation);
+    let messageIndex = -1;
+    for (let index = 0; index < entry.chunks.length; index++) {
+      const score = dot(query, entry.vectors, 0, index * dims, dims) / 127;
+      if (score > best) {
+        best = score;
+        messageIndex = entry.chunks[index]!.messageIndex;
+      }
+    }
+    if (best >= floor) hits.push([recordId, Math.round(best * 1000) / 1000, messageIndex]);
+  }
+  return hits.sort((a, b) => b[1] - a[1]);
+}
+
 /** The two messages that match best between two conversations, from their chunk vectors — the "why" of a semantic link. */
 export function bestChunkMatch(
   a: { chunks: readonly { messageIndex: number }[]; vectors: Int8Array },

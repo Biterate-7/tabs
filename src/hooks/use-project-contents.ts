@@ -1,6 +1,7 @@
 "use client"
 
 import { useEffect, useMemo, useState } from "react"
+import { errorMessage, logIntelligence } from "@/lib/conversations/intelligence/diagnostics"
 import { getProjectContents } from "@/lib/resources/content-store"
 import type { ResourceContent } from "@/lib/resources/types"
 import type { Workspace } from "@/lib/workspace/types"
@@ -44,9 +45,18 @@ export function useProjectContents(workspaces: readonly Pick<Workspace, "id" | "
       .filter(Boolean)
       .map((entry) => ({ id: entry.slice(0, entry.indexOf(":")), any: entry.length > entry.indexOf(":") + 1 }))
     void Promise.all(
-      ids.map(async ({ id, any }) => [id, any ? await getProjectContents(id).catch(() => new Map<string, ResourceContent>()) : new Map<string, ResourceContent>()] as const)
+      ids.map(async ({ id, any }) => {
+        if (!any) return [id, new Map<string, ResourceContent>()] as const
+        try {
+          return [id, await getProjectContents(id)] as const
+        } catch (error) {
+          // Left out rather than shown as empty: a project whose text couldn't be read is "not loaded", never "has no text".
+          logIntelligence({ level: "error", kind: "content", event: "project-read-failed", message: errorMessage(error), data: { workspaceId: id } })
+          return undefined
+        }
+      })
     ).then((entries) => {
-      if (!cancelled) setLoaded({ key, contents: new Map(entries) })
+      if (!cancelled) setLoaded({ key, contents: new Map(entries.filter((entry): entry is NonNullable<typeof entry> => !!entry)) })
     })
     return () => {
       cancelled = true

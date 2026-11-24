@@ -1,4 +1,5 @@
 import { getStorageNamespace } from "@/lib/storage/namespace";
+import { logIntelligence } from "./diagnostics";
 import type { ConversationExtraction } from "./types";
 
 /**
@@ -27,11 +28,66 @@ import type { ConversationExtraction } from "./types";
  */
 
 const DB_NAME = "hubble-intelligence";
-const DB_VERSION = 1;
+/**
+ * 1: extractions, embeddings.
+ * 2: + failures (why a conversation couldn't be processed, per stage, keyed
+ *    like the text so it is deleted with it) and runs (the last processing
+ *    run's checkpoint and report, per account). The upgrade only adds
+ *    stores — nothing in version 1 is touched.
+ */
+const DB_VERSION = 2;
 export const EXTRACTIONS = "extractions";
 export const EMBEDDINGS = "embeddings";
-type StoreName = typeof EXTRACTIONS | typeof EMBEDDINGS;
+export const FAILURES = "failures";
+export const RUNS = "runs";
+type RecordStore = typeof EXTRACTIONS | typeof EMBEDDINGS | typeof FAILURES;
+type StoreName = RecordStore | typeof RUNS;
+/** Stores whose entries belong to one conversation (and go with it). */
+const RECORD_STORES: readonly RecordStore[] = [EXTRACTIONS, EMBEDDINGS, FAILURES];
+const ALL_STORES: readonly StoreName[] = [EXTRACTIONS, EMBEDDINGS, FAILURES, RUNS];
 const OWNER_INDEX = "owner";
+
+export type FailureStage = "extraction" | "embedding";
+
+/** One stage's failure for one conversation. Never holds conversation text: `message` is the error Hubble's own code raised. */
+export type RecordedFailure = {
+  stage: FailureStage;
+  /** Short and stable: "extract-threw", "cache-write", "embed-threw"… */
+  code: string;
+  message: string;
+  /** What was being processed: a later save (new fingerprint) or extractor makes it worth trying again. */
+  fingerprint: string;
+  version: number | string;
+  attempts: number;
+  firstAt: number;
+  lastAt: number;
+};
+
+export type FailureEntry = {
+  key: string;
+  owner: string;
+  recordId: string;
+  stages: Partial<Record<FailureStage, RecordedFailure>>;
+};
+
+/** The last processing run for one account: its checkpoint while it runs, its report once it ends. */
+export type RunCheckpoint<Report = unknown> = {
+  key: string;
+  owner: string;
+  runId: string;
+  state: "running" | "complete" | "cancelled" | "failed";
+  startedAt: number;
+  updatedAt: number;
+  finishedAt?: number;
+  /** A run found still "running" when the next began: it was interrupted (closed, crashed) and this one picked up after it. */
+  resumedFrom?: string;
+  report: Report;
+};
+
+export function runKey(owner: string): string {
+  // Not `<owner>|…`: that prefix is per-conversation, and pruning would treat this as a deleted conversation's.
+  return `run:${owner}`;
+}
 
 export type CachedExtraction = {
   key: string;
@@ -55,7 +111,20 @@ export type CachedEmbedding = {
   conversation: Float32Array;
 };
 
-const memory: Record<StoreName, Map<string, CachedExtraction | CachedEmbedding>> = { [EXTRACTIONS]: new Map(), [EMBEDDINGS]: new Map() };
+type Entry = CachedExtraction | CachedEmbedding | FailureEntry | RunCheckpoint;
+const memory: Record<StoreName, Map<string, Entry>> = { [EXTRACTIONS]: new Map(), [EMBEDDINGS]: new Map(), [FAILURES]: new Map(), [RUNS]: new Map() };
+
+const forgottenListeners = new Set<(keys: readonly string[] | "all") => void>();
+
+/** Told when derived entries are deleted, so a copy kept in memory (backfill.ts) goes too. */
+export function onDerivedForgotten(listener: (keys: readonly string[] | "all") => void): () => void {
+  forgottenListeners.add(listener);
+  return () => forgottenListeners.delete(listener);
+}
+
+function forgotten(keys: readonly string[] | "all") {
+  for (const listener of forgottenListeners) listener(keys);
+}
 
 export function derivedOwner(): string {
   return getStorageNamespace() ?? "_";
@@ -81,9 +150,14 @@ function openDb(): Promise<IDBDatabase> {
     const request = indexedDB.open(DB_NAME, DB_VERSION);
     request.onupgradeneeded = () => {
       const db = request.result;
-      for (const name of [EXTRACTIONS, EMBEDDINGS]) {
+      // Additive only: a store that exists keeps every entry it has.
+      for (const name of ALL_STORES) {
         if (!db.objectStoreNames.contains(name)) db.createObjectStore(name, { keyPath: "key" }).createIndex(OWNER_INDEX, "owner", { unique: false });
       }
+    };
+    request.onblocked = () => {
+      // Another connection (an older page) still holds version 1; the upgrade waits for it to close.
+      logIntelligence({ level: "warn", kind: "store", event: "upgrade-blocked", message: "The analysis cache is waiting for another Hubble window to close before it can upgrade." });
     };
     request.onsuccess = () => {
       const db = request.result;
@@ -117,12 +191,51 @@ function run<T>(name: StoreName, mode: IDBTransactionMode, work: (store: IDBObje
 }
 
 /** Every entry of one store for one account. */
-export async function readDerived<T extends CachedExtraction | CachedEmbedding>(name: StoreName, owner: string): Promise<T[]> {
+export async function readDerived<T extends Entry>(name: StoreName, owner: string): Promise<T[]> {
   if (!persistent()) return [...memory[name].values()].filter((entry) => entry.owner === owner) as T[];
   return ((await run<T[]>(name, "readonly", (store) => store.index(OWNER_INDEX).getAll(IDBKeyRange.only(owner)) as IDBRequest<T[]>)) ?? []) as T[];
 }
 
-export async function writeDerived(name: StoreName, entries: readonly (CachedExtraction | CachedEmbedding)[]): Promise<void> {
+/** Whether this device keeps the cache across restarts (IndexedDB), or only for this page. */
+export function derivedStorePersistent(): boolean {
+  return persistent();
+}
+
+/** The last run's checkpoint for this account, if any. */
+export async function readRun<Report>(owner: string): Promise<RunCheckpoint<Report> | undefined> {
+  const key = runKey(owner);
+  if (!persistent()) return memory[RUNS].get(key) as RunCheckpoint<Report> | undefined;
+  return (await run<RunCheckpoint<Report> | undefined>(RUNS, "readonly", (store) => store.get(key) as IDBRequest<RunCheckpoint<Report> | undefined>)) ?? undefined;
+}
+
+export async function writeRun<Report>(checkpoint: RunCheckpoint<Report>): Promise<void> {
+  if (!persistent()) {
+    memory[RUNS].set(checkpoint.key, checkpoint);
+    return;
+  }
+  await run(RUNS, "readwrite", (store) => {
+    store.put(checkpoint);
+  });
+}
+
+/**
+ * Writes some entries and deletes others in one transaction: a batch's
+ * analysis and the failures it cleared land together, or not at all.
+ */
+export async function commitDerived(name: RecordStore, put: readonly Entry[], remove: readonly string[] = []): Promise<void> {
+  if (put.length === 0 && remove.length === 0) return;
+  if (!persistent()) {
+    for (const key of remove) memory[name].delete(key);
+    for (const entry of put) memory[name].set(entry.key, entry);
+    return;
+  }
+  await run(name, "readwrite", (store) => {
+    for (const key of remove) store.delete(key);
+    for (const entry of put) store.put(entry);
+  });
+}
+
+export async function writeDerived(name: StoreName, entries: readonly Entry[]): Promise<void> {
   if (entries.length === 0) return;
   if (!persistent()) {
     for (const entry of entries) memory[name].set(entry.key, entry);
@@ -136,7 +249,8 @@ export async function writeDerived(name: StoreName, entries: readonly (CachedExt
 /** Forgets everything derived for these keys, in every store. */
 export async function forgetDerived(keys: readonly string[]): Promise<void> {
   if (keys.length === 0) return;
-  for (const name of [EXTRACTIONS, EMBEDDINGS] as const) {
+  forgotten(keys);
+  for (const name of RECORD_STORES) {
     if (!persistent()) {
       for (const key of keys) memory[name].delete(key);
       continue;
@@ -151,14 +265,12 @@ export async function forgetDerived(keys: readonly string[]): Promise<void> {
 export async function pruneDerivedExcept(owner: string, keep: ReadonlySet<string>): Promise<number> {
   const prefix = `${owner}|`;
   let removed = 0;
-  for (const name of [EXTRACTIONS, EMBEDDINGS] as const) {
+  for (const name of RECORD_STORES) {
     if (!persistent()) {
-      for (const key of [...memory[name].keys()]) {
-        if (key.startsWith(prefix) && !keep.has(key)) {
-          memory[name].delete(key);
-          removed += 1;
-        }
-      }
+      const gone = [...memory[name].keys()].filter((key) => key.startsWith(prefix) && !keep.has(key));
+      for (const key of gone) memory[name].delete(key);
+      if (name === EXTRACTIONS && gone.length > 0) forgotten(gone);
+      removed += gone.length;
       continue;
     }
     const keys = ((await run<IDBValidKey[]>(name, "readonly", (store) => store.getAllKeys(IDBKeyRange.bound(prefix, `${prefix}￿`)))) ?? []).filter(
@@ -168,6 +280,7 @@ export async function pruneDerivedExcept(owner: string, keep: ReadonlySet<string
       await run(name, "readwrite", (store) => {
         for (const key of keys) store.delete(key);
       });
+      if (name === EXTRACTIONS) forgotten(keys);
     }
     removed += keys.length;
   }
@@ -177,6 +290,7 @@ export async function pruneDerivedExcept(owner: string, keep: ReadonlySet<string
 /** Forgets one store's entries for an account — turning semantic matching off removes its vectors. */
 export async function clearDerived(name: StoreName, owner: string): Promise<number> {
   const prefix = `${owner}|`;
+  if (name === EXTRACTIONS) forgotten("all");
   if (!persistent()) {
     let removed = 0;
     for (const key of [...memory[name].keys()])
@@ -206,13 +320,13 @@ export async function derivedSize(owner: string): Promise<{ extractions: number;
 
 /** For tests. */
 export function resetDerivedStoreForTests(): void {
-  memory[EXTRACTIONS].clear();
-  memory[EMBEDDINGS].clear();
+  for (const name of ALL_STORES) memory[name].clear();
   opening = null;
+  forgotten("all");
 }
 
 /** Entries of one store by key — for explaining one pair, without reading the account's whole cache. */
-export async function readDerivedKeys<T extends CachedExtraction | CachedEmbedding>(name: StoreName, keys: readonly string[]): Promise<(T | undefined)[]> {
+export async function readDerivedKeys<T extends Entry>(name: StoreName, keys: readonly string[]): Promise<(T | undefined)[]> {
   if (!persistent()) return keys.map((key) => memory[name].get(key) as T | undefined);
   const out: (T | undefined)[] = [];
   await run(name, "readonly", (store) => {
