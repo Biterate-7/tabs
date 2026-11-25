@@ -142,7 +142,7 @@ describe("Save to Hubble", () => {
     const answer = await ask({ type: MSG_CAPTURE_CONVERSATION, payload: { tabId: 7, workspaceId: "ws-history" } });
     expect(answer).toMatchObject({ ok: true, result: { outcome: "added", turns: 2 } });
     expect(chrome.scripting.executeScript).toHaveBeenCalledTimes(1);
-    expect(chrome.scripting.executeScript).toHaveBeenCalledWith({ target: { tabId: 7 }, func: expect.objectContaining({ name: readConversationFromPage.name }) });
+    expect(chrome.scripting.executeScript).toHaveBeenCalledWith({ target: { tabId: 7 }, func: expect.objectContaining({ name: readConversationFromPage.name }), args: [null, null, 8000] });
     expect(pageRequests).toEqual([
       expect.objectContaining({ tabId: 42, kind: "capture", args: { workspaceId: "ws-history", captureId: expect.any(String), capture: { url: CHAT_URL, title: "Thesis feedback - Claude", turns: expect.any(Array) } } }),
     ]);
@@ -159,7 +159,7 @@ describe("Save to Hubble", () => {
 
   it("passes on the page reader's reason when the layout is not recognised", async () => {
     chrome.scripting.executeScript.mockResolvedValue([{ result: { ok: false, reason: "no-messages", provider: "claude" } }]);
-    expect(await ask({ type: MSG_CAPTURE_CONVERSATION, payload: { tabId: 7, workspaceId: "ws" } })).toEqual({ ok: false, error: "no-messages" });
+    expect(await ask({ type: MSG_CAPTURE_CONVERSATION, payload: { tabId: 7, workspaceId: "ws" } })).toMatchObject({ ok: false, error: "no-messages", provider: "claude" });
     expect(pageRequests).toEqual([]);
   });
 });
@@ -217,23 +217,23 @@ describe("Save to Hubble on ChatGPT's signed-in layout (2026-10-15)", () => {
   it("asks Hubble to save nothing when the page sends back something malformed", async () => {
     for (const result of [{ ok: true, turns: "What caused WW1?" }, { ok: true, turns: [{ role: "system", text: "x" }] }, { ok: false, reason: "something-new" }]) {
       chrome.scripting.executeScript.mockResolvedValue([{ result }]);
-      expect(await ask({ type: MSG_CAPTURE_CONVERSATION, payload: { tabId: 7, workspaceId: "ws" } })).toEqual({ ok: false, error: "invalid" });
+      expect(await ask({ type: MSG_CAPTURE_CONVERSATION, payload: { tabId: 7, workspaceId: "ws" } })).toMatchObject({ ok: false, error: "invalid" });
     }
     expect(pageRequests).toEqual([]);
   });
 
   it("says the page could not be read when the script fails or answers nothing", async () => {
     chrome.scripting.executeScript.mockRejectedValue(new Error("Cannot access contents of the page."));
-    expect(await ask({ type: MSG_CAPTURE_CONVERSATION, payload: { tabId: 7, workspaceId: "ws" } })).toEqual({ ok: false, error: "page-unreadable" });
+    expect(await ask({ type: MSG_CAPTURE_CONVERSATION, payload: { tabId: 7, workspaceId: "ws" } })).toMatchObject({ ok: false, error: "page-unreadable" });
     chrome.scripting.executeScript.mockResolvedValue([]);
-    expect(await ask({ type: MSG_CAPTURE_CONVERSATION, payload: { tabId: 7, workspaceId: "ws" } })).toEqual({ ok: false, error: "page-unreadable" });
+    expect(await ask({ type: MSG_CAPTURE_CONVERSATION, payload: { tabId: 7, workspaceId: "ws" } })).toMatchObject({ ok: false, error: "page-unreadable" });
     expect(pageRequests).toEqual([]);
   });
 
   it("says read-failed, not that Chrome blocked the page, when the reader itself throws", async () => {
     const broken = { title: "", querySelectorAll: () => { throw new TypeError("boom"); } };
     chrome.scripting.executeScript.mockImplementation(async ({ func }) => [{ result: await func(broken, CHATGPT_URL, 0) }]);
-    expect(await ask({ type: MSG_CAPTURE_CONVERSATION, payload: { tabId: 7, workspaceId: "ws" } })).toEqual({ ok: false, error: "read-failed" });
+    expect(await ask({ type: MSG_CAPTURE_CONVERSATION, payload: { tabId: 7, workspaceId: "ws" } })).toMatchObject({ ok: false, error: "read-failed", detail: "TypeError: boom" });
     expect(pageRequests).toEqual([]);
   });
 
@@ -241,7 +241,7 @@ describe("Save to Hubble on ChatGPT's signed-in layout (2026-10-15)", () => {
     const empty = document.implementation.createHTMLDocument("ChatGPT");
     empty.body.innerHTML = `<main><div data-thread-find-target="conversation"><div></div></div></main>`;
     chrome.scripting.executeScript.mockImplementation(async ({ func }) => [{ result: await func(empty, CHATGPT_URL, 0) }]);
-    expect(await ask({ type: MSG_CAPTURE_CONVERSATION, payload: { tabId: 7, workspaceId: "ws" } })).toEqual({ ok: false, error: "empty-conversation" });
+    expect(await ask({ type: MSG_CAPTURE_CONVERSATION, payload: { tabId: 7, workspaceId: "ws" } })).toMatchObject({ ok: false, error: "empty-conversation" });
     expect(pageRequests).toEqual([]);
   });
 });

@@ -193,6 +193,12 @@ describe("readImportFile", () => {
 /* ------------------------------------------------------------------ */
 
 describe("readConversationCapture (from Hubble for Chrome)", () => {
+  it("takes a Perplexity thread at its /session/ address (2026-11-24), keyed by its id", () => {
+    const read = readConversationCapture({ url: "https://www.perplexity.ai/session/2c347cdf-b595-4b86-8c02-2112937b702d", title: "Tea history", turns: [{ role: "user", text: "Why tea?" }, { role: "assistant", text: "Because." }] });
+    expect(read).toMatchObject({ ok: true, conversation: { provider: "perplexity", conversationId: "2c347cdf-b595-4b86-8c02-2112937b702d", url: "https://www.perplexity.ai/session/2c347cdf-b595-4b86-8c02-2112937b702d", method: "page" } });
+  });
+
+
   it("decides the AI app from the address, never from the payload", () => {
     const read = readConversationCapture({ url: "https://claude.ai/chat/0b6f6d3e-aaaa-bbbb-cccc-111122223333?x=1", provider: "chatgpt", title: "Thesis feedback - Claude", turns: [{ role: "user", text: "hi" }] });
     expect(read).toMatchObject({ ok: true, conversation: { provider: "claude", title: "Thesis feedback", url: "https://claude.ai/chat/0b6f6d3e-aaaa-bbbb-cccc-111122223333", method: "page" } });

@@ -65,6 +65,26 @@ describe("createMirror", () => {
     expect(onError).toHaveBeenCalledTimes(1)
   })
 
+  it("flush says whether everything so far reached the durable copy — at once, without waiting for the timer", async () => {
+    let fail = false
+    const write = vi.fn(async () => {
+      if (fail) throw new Error("disk full")
+    })
+    const mirror = createMirror(write, { onError: () => {} })
+    expect(await mirror.flush()).toBe(true)
+    mirror.set("a", "1")
+    expect(await mirror.flush()).toBe(true)
+    expect(write).toHaveBeenCalledTimes(1)
+    fail = true
+    mirror.set("a", "2")
+    expect(await mirror.flush()).toBe(false)
+    // Nothing new since the failed write: still not in the durable copy.
+    expect(await mirror.flush()).toBe(false)
+    fail = false
+    mirror.set("a", "3")
+    expect(await mirror.flush()).toBe(true)
+  })
+
   it("a clear drops what was pending and is sent as a clear", async () => {
     const write = vi.fn(async () => {})
     const mirror = createMirror(write)

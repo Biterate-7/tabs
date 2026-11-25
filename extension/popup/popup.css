@@ -87,6 +87,13 @@ body {
   color: rgb(var(--fg-rgb) / 0.6);
 }
 
+/* A read failure's details: small and selectable, for a bug report. */
+.popup__diagnostic {
+  font-size: 11px;
+  user-select: text;
+  overflow-wrap: anywhere;
+}
+
 .popup__count {
   font-size: 13px;
   font-weight: 500;

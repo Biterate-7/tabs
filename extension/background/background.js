@@ -1033,21 +1033,25 @@ async function captureConversation({ tabId, workspaceId, expectedKey }) {
   }
 }
 
+// How long Save lets the page finish rendering, or finish writing a reply, before it says why it couldn't read it.
+const CAPTURE_READ_WAIT_MS = 8000;
+
 async function captureIdentified(tabId, tab, identity, workspaceId, { viaDesktop = true, owner } = {}) {
   let read;
   try {
-    const [injection] = await chrome.scripting.executeScript({ target: { tabId }, func: readConversationFromPage });
+    const [injection] = await chrome.scripting.executeScript({ target: { tabId }, func: readConversationFromPage, args: [null, null, CAPTURE_READ_WAIT_MS] });
     read = injection?.result;
   } catch (err) {
-    log("capture-read-failed", { detail: errorMessage(err) });
+    log("capture-read-failed", { provider: identity.provider, detail: errorMessage(err) });
     return { ok: false, error: "page-unreadable" };
   }
   const checked = checkPageRead(read);
   // Counts and reasons only: what the conversation says is never logged.
   if (!checked.ok) {
     // A null result is Chrome swallowing an error thrown in the page; `detail` is the reader's own error, never page text.
-    log("capture-read-refused", { reason: checked.error, provider: aiProviderOf(tab.url), detail: typeof read?.detail === "string" ? read.detail : read == null ? "no result" : undefined });
-    return { ok: false, error: checked.error };
+    const detail = typeof read?.detail === "string" ? read.detail.slice(0, 200) : read == null ? "no result" : undefined;
+    log("capture-read-refused", { reason: checked.error, provider: identity.provider, detail, diagnostics: checked.diagnostics });
+    return { ok: false, error: checked.error, provider: identity.provider, ...(checked.diagnostics ? { diagnostics: checked.diagnostics } : {}), ...(detail ? { detail } : {}) };
   }
   // The page moved to another conversation while it was read (a chat switched in the app): what was read may be
   // either chat's, so nothing is saved.
@@ -1055,7 +1059,7 @@ async function captureIdentified(tabId, tab, identity, workspaceId, { viaDesktop
     log("capture-read-moved", { provider: identity.provider });
     return { ok: false, error: "tab-changed" };
   }
-  log("capture-read", { provider: identity.provider, turns: checked.turns.length, partial: checked.partial });
+  log("capture-read", { provider: identity.provider, strategy: checked.strategy, turns: checked.turns.length, partial: checked.partial, olderNotLoaded: checked.olderNotLoaded });
   // The address Chrome reports wins over the page's own: it is what the person is looking at.
   const capture = { url: tab.url, title: checked.title || tab.title || "", turns: checked.turns };
 

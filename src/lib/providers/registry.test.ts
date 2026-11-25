@@ -19,6 +19,8 @@ describe("conversation addresses", () => {
     ["https://gemini.google.com/gem/study-buddy/1a2b3c4d5e6f", "gemini", "1a2b3c4d5e6f", "chat"],
     ["https://gemini.google.com/share/9f8e7d6c5b4a", "gemini", "9f8e7d6c5b4a", "share"],
     ["https://www.perplexity.ai/search/why-is-the-sky-blue-x1y2z3", "perplexity", "why-is-the-sky-blue-x1y2z3", "chat"],
+    // 2026-11-24: new Perplexity threads open at /session/<uuid>.
+    ["https://www.perplexity.ai/session/2c347cdf-b595-4b86-8c02-2112937b702d", "perplexity", "2c347cdf-b595-4b86-8c02-2112937b702d", "chat"],
   ] as const)("%s names one %s conversation", (url, provider, conversationId, kind) => {
     expect(conversationRefOf(url)).toEqual({ provider, conversationId, url, key: `${provider}:${kind}:${conversationId}` });
     expect(conversationKeyOf(url)).toBe(`${provider}:${kind}:${conversationId}`);
