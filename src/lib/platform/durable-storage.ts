@@ -48,22 +48,33 @@ export function createMirror(write: DurableStoreApi["write"], options: { delayMs
   let timer: ReturnType<typeof setTimeout> | undefined
   let inFlight: Promise<void> | undefined
 
-  async function flush(): Promise<void> {
+  // Whether the last batch reached the durable copy.
+  let lastOk = true
+
+  /** Writes what is waiting now. Resolves to whether everything changed so far is in the durable copy. */
+  async function flush(): Promise<boolean> {
     if (timer !== undefined) clearTimeout(timer)
     timer = undefined
     // One batch at a time, so a later value never lands before an earlier one.
     while (inFlight) await inFlight
-    if (pending.size === 0 && !pendingClear) return
+    if (pending.size === 0 && !pendingClear) return lastOk
     const changes = [...pending].map(([key, value]) => ({ key, value }))
     const clear = pendingClear
     pending = new Map()
     pendingClear = false
     inFlight = write(changes, { clear, seed: false })
-      .catch((error) => options.onError?.(error))
+      .then(() => {
+        lastOk = true
+      })
+      .catch((error) => {
+        lastOk = false
+        options.onError?.(error)
+      })
       .finally(() => {
         inFlight = undefined
       })
     await inFlight
+    return lastOk
   }
 
   function schedule() {
@@ -99,6 +110,19 @@ function snapshotOf(storage: Storage): Record<string, string> {
 
 let started: Promise<void> | undefined
 let unpatch: (() => void) | undefined
+let activeMirror: ReturnType<typeof createMirror> | undefined
+
+/**
+ * Writes every localStorage change made so far to the durable copy now,
+ * instead of within ~100 ms. Resolves to whether it is there — true where
+ * there is no durable copy (Hubble on the web, tests), since localStorage is
+ * then all there is. A save that tells another program it is done (Hubble
+ * for Chrome) waits for this first, so "saved" means on disk.
+ */
+export async function flushDurableStorage(): Promise<boolean> {
+  if (started) await started
+  return activeMirror ? activeMirror.flush() : true
+}
 
 /**
  * Restores the durable copy into `storage`, then mirrors every later change.
@@ -122,6 +146,7 @@ export function startDurableStorage(api: DurableStoreApi, storage: Storage = win
       onError(error)
     }
     const mirror = createMirror((changes, options) => api.write(changes, options), { onError })
+    activeMirror = mirror
     // On the prototype, for this one Storage object only: assigning `storage.setItem` would store an item named "setItem".
     proto.setItem = function (this: Storage, key: string, value: string) {
       original.setItem.call(this, key, value)
@@ -145,4 +170,5 @@ export function __resetDurableStorageForTests(): void {
   unpatch?.()
   unpatch = undefined
   started = undefined
+  activeMirror = undefined
 }

@@ -518,14 +518,15 @@ export function createActivityCollector(deps) {
         return "moved";
       }
       const ok = read?.ok === true && Array.isArray(read.turns) && read.turns.length > 0;
-      const gap = ok ? undefined : read?.reason === "no-messages" ? "layout" : read?.reason === "empty-conversation" ? "empty" : "read-failed";
+      const gap = ok ? undefined : read?.reason === "no-messages" ? "layout" : read?.reason === "empty-conversation" || read?.reason === "not-loaded" ? "empty" : "read-failed";
       deps.log?.("context-read", { provider: identity.provider, ok, turns: ok ? read.turns.length : 0, ...(gap ? { gap } : {}) });
       await serial(async () => {
         const latest = store.records[key];
         if (!latest) return;
         const attemptedAt = deps.now();
         if (ok) {
-          const partial = read.partial === true || read.olderNotLoaded === true || read.truncated === true;
+          // A reply still being written when it was read is kept as part of the conversation, never as all of it.
+          const partial = read.partial === true || read.olderNotLoaded === true || read.truncated === true || read.responding === true;
           touch({
             ...latest,
             ...(cleanTitle(read.title) && !latest.title ? { title: cleanTitle(read.title) } : {}),

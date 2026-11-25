@@ -3,7 +3,7 @@
 // itself with only chrome.runtime/storage mocked.
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { MSG_CAPTURE_CONVERSATION, MSG_DESKTOP_STATUS, MSG_MEMORY_REQUEST } from "../src/config.js";
-import { captureError, conversationTitleOf, describeCapture, describeSavedState, initAiPanel, readHits, readPanelProjects, readSavedPlaces } from "./ai-panel.js";
+import { captureError, conversationTitleOf, describeCapture, describeReadDetails, describeSavedState, initAiPanel, readHits, readPanelProjects, readSavedPlaces } from "./ai-panel.js";
 
 describe("describeCapture", () => {
   it("says what a save did, in words", () => {
@@ -66,8 +66,19 @@ describe("what the popup accepts from the page", () => {
 
   it("falls back to a generic message for an unknown reason", () => {
     expect(captureError("not-a-conversation")).toMatch(/isn't one/);
-    expect(captureError("read-failed")).toMatch(/couldn't read this conversation.*Import AI chats/);
+    expect(captureError("read-failed")).toMatch(/error reading this page.*details below/);
     expect(captureError("something-new")).toBe("Something went wrong. Try again.");
+  });
+});
+
+describe("describeReadDetails", () => {
+  it("says what the reader found for a failed read, and nothing for a save or another kind of failure", () => {
+    expect(describeReadDetails({ ok: false, error: "read-failed", provider: "claude", detail: "TypeError: x" })).toBe("Details: claude · read-failed · TypeError: x");
+    expect(describeReadDetails({ ok: false, error: "not-loaded", provider: "gemini", diagnostics: { loading: true, strategies: { "query-response": 0 } } })).toBe("Details: gemini · not-loaded · found query-response 0 · loading");
+    expect(describeReadDetails({ ok: false, error: "still-responding" })).toBe("");
+    expect(describeReadDetails({ ok: false, error: "no-hubble-tab" })).toBe("");
+    expect(describeReadDetails({ ok: true })).toBe("");
+    expect(describeReadDetails(undefined)).toBe("");
   });
 });
 
@@ -85,8 +96,8 @@ describe("the Save button on a ChatGPT conversation", () => {
   function mount(captureAnswer, { desktop, hubbleOpen = true, saved = () => [] } = {}) {
     // The AI section of popup.html, as the popup has it.
     document.body.innerHTML = `<section id="ai-section" hidden><p id="ai-page"></p><p id="ai-saved" hidden></p><select id="ai-project-select"></select>
-      <button id="capture-button" disabled>Save this conversation</button><button id="ai-open-hubble-button" hidden>Open Hubble</button>
-      <p id="capture-status" role="status" hidden></p>
+      <button id="capture-button" disabled>Save this conversation</button><button id="capture-retry-button" hidden>Try again</button><button id="ai-open-hubble-button" hidden>Open Hubble</button>
+      <p id="capture-status" role="status" hidden></p><p id="capture-details" hidden></p>
       <details id="memory-panel"><input id="memory-query" /><ul id="memory-results"></ul><textarea id="memory-request"></textarea>
       <button id="insert-button" disabled></button><button id="copy-button" disabled></button><p id="memory-status" hidden></p></details></section>`;
     captures = [];
@@ -149,15 +160,44 @@ describe("the Save button on a ChatGPT conversation", () => {
     await mount({ ok: false, error: "no-messages" });
     button().click();
     await settle();
-    expect(status()).toMatch(/couldn't find the messages .* Add → Import AI chats/);
+    expect(status()).toMatch(/didn't recognise the messages .*nothing was saved.* Add → Import AI chats/);
     expect(status()).not.toMatch(/paste/i);
+  });
+
+  it("says why a read failed in a bug-report line, and Try again reads the page again without a reload", async () => {
+    let answers = [{ ok: false, error: "no-messages", provider: "chatgpt", diagnostics: { strategies: { "unit-key": 0, "message-role": 0 }, main: true, elements: 812 } }, { ok: true, result: { outcome: "added", turns: 6 } }];
+    await mount(() => answers.shift());
+    const retry = () => document.getElementById("capture-retry-button");
+    const details = () => document.getElementById("capture-details");
+    button().click();
+    await settle();
+    expect(status()).toMatch(/didn't recognise the messages/);
+    expect(details().hidden).toBe(false);
+    expect(details().textContent).toBe("Details: chatgpt · no-messages · found unit-key 0, message-role 0 · main · 812 elements");
+    expect(retry().hidden).toBe(false);
+    retry().click();
+    expect(status()).toBe("Reading the conversation…");
+    await settle();
+    expect(captures).toHaveLength(2);
+    expect(status()).toBe("Saved to Physics · 6 turns");
+    expect(retry().hidden).toBe(true);
+    expect(details().hidden).toBe(true);
+  });
+
+  it("says a reply still being written is not saved yet, and offers Try again", async () => {
+    await mount({ ok: false, error: "still-responding", provider: "chatgpt", diagnostics: { turns: 3 } });
+    button().click();
+    await settle();
+    expect(status()).toBe("The reply is still being written. Hubble saves whole conversations — Try again once it has finished.");
+    expect(document.getElementById("capture-retry-button").hidden).toBe(false);
+    expect(document.getElementById("capture-details").hidden).toBe(true);
   });
 
   it("says an empty conversation is empty, not unreadable", async () => {
     await mount({ ok: false, error: "empty-conversation" });
     button().click();
     await settle();
-    expect(status()).toBe("There are no messages in this conversation yet. If it's still loading, wait a moment and try again.");
+    expect(status()).toBe("There are no messages in this conversation yet. If it's still loading, wait a moment and Try again.");
   });
 
   describe("always about the conversation on screen (regression: a second chat from the same app looked saved)", () => {
@@ -274,7 +314,7 @@ describe("the Save button on a ChatGPT conversation", () => {
       expect(status()).toBe("Hubble Desktop is open. You'll choose the project there.");
       expect(document.getElementById("ai-open-hubble-button").hidden).toBe(true);
       button().click();
-      expect(status()).toBe("Choose a project in Hubble Desktop…");
+      expect(status()).toBe("Reading the conversation… then choose a project in Hubble Desktop.");
       await settle();
       expect(captures).toEqual([{ tabId: 7, expectedKey: KEY }]);
       expect(status()).toBe("Saved to Biology · 4 turns");

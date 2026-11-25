@@ -103,6 +103,7 @@ describe("readConversationFromPage", () => {
         { role: "assistant", text: "Militarism and alliances." },
       ],
       truncated: false,
+      strategy: "message-role",
     });
   });
 
@@ -145,7 +146,7 @@ describe("readConversationFromPage", () => {
 
   it("says when a page's layout has no messages it recognises, rather than saving nothing", async () => {
     const doc = page(`<main><div class="some-new-layout">What caused WW1?</div></main>`);
-    expect(await readConversationFromPage(doc, "https://chatgpt.com/c/6720a1b2-1111-2222", 0)).toEqual({ ok: false, reason: "no-messages", provider: "chatgpt" });
+    expect(await readConversationFromPage(doc, "https://chatgpt.com/c/6720a1b2-1111-2222", 0)).toMatchObject({ ok: false, reason: "no-messages", provider: "chatgpt" });
   });
 
   it("refuses any other site", async () => {
@@ -342,6 +343,7 @@ describe("ChatGPT, signed in (live markup, 2026-10-15)", () => {
         { role: "assistant", text: "The assassination in Sarajevo." },
       ],
       truncated: false,
+      strategy: "unit-key",
     });
   });
 
@@ -431,17 +433,17 @@ describe("ChatGPT, signed in (live markup, 2026-10-15)", () => {
       `<main><div data-thread-find-target="conversation"><div data-turn-key="t1"><div><div>What caused WW1?</div></div><div><div>Militarism and alliances.</div></div></div></div>
        <form><textarea name="prompt"></textarea></form></main>`
     );
-    expect(await readConversationFromPage(doc, SIGNED_IN, 0)).toEqual({ ok: false, reason: "no-messages", provider: "chatgpt" });
+    expect(await readConversationFromPage(doc, SIGNED_IN, 0)).toMatchObject({ ok: false, reason: "no-messages", provider: "chatgpt" });
   });
 
   it("says no-messages when messages are found but none has readable text", async () => {
-    expect(await readConversationFromPage(signedInPage([unitTurn(0, "", "")]), SIGNED_IN, 0)).toEqual({ ok: false, reason: "no-messages", provider: "chatgpt" });
+    expect(await readConversationFromPage(signedInPage([unitTurn(0, "", "")]), SIGNED_IN, 0)).toMatchObject({ ok: false, reason: "no-messages", provider: "chatgpt" });
   });
 
   it("says empty-conversation for a conversation with no messages", async () => {
-    expect(await readConversationFromPage(signedInPage([]), SIGNED_IN, 0)).toEqual({ ok: false, reason: "empty-conversation", provider: "chatgpt" });
+    expect(await readConversationFromPage(signedInPage([]), SIGNED_IN, 0)).toMatchObject({ ok: false, reason: "empty-conversation", provider: "chatgpt" });
     // A loading notice is not a message either.
-    expect(await readConversationFromPage(signedInPage([], { status: "Loading…" }), SIGNED_IN, 0)).toEqual({ ok: false, reason: "empty-conversation", provider: "chatgpt" });
+    expect(await readConversationFromPage(signedInPage([], { status: "Loading…" }), SIGNED_IN, 0)).toMatchObject({ ok: false, reason: "empty-conversation", provider: "chatgpt" });
   });
 
   it("waits for a conversation that has not finished rendering, then reads it once", async () => {
@@ -460,7 +462,7 @@ describe("ChatGPT, signed in (live markup, 2026-10-15)", () => {
 
   it("gives up with its reason once the wait is over", async () => {
     const started = Date.now();
-    expect(await readConversationFromPage(page(`<main><div>Something else</div></main>`), SIGNED_IN, 300)).toEqual({ ok: false, reason: "no-messages", provider: "chatgpt" });
+    expect(await readConversationFromPage(page(`<main><div>Something else</div></main>`), SIGNED_IN, 300)).toMatchObject({ ok: false, reason: "no-messages", provider: "chatgpt" });
     expect(Date.now() - started).toBeGreaterThanOrEqual(250);
   });
 
@@ -565,6 +567,7 @@ describe("signed in (live markup, 2026-10-16)", () => {
         { role: "assistant", text: "1905 to 1914." },
       ],
       truncated: false,
+      strategy: "message-testid",
     });
   });
 
@@ -662,5 +665,228 @@ describe("checkPageRead: what came back from the page, before it goes anywhere",
     for (const turns of [undefined, "Why?", [{ role: "system", text: "x" }], [{ role: "user", text: 3 }], [null], [], [{ role: "user", text: " \n " }]]) {
       expect(checkPageRead({ ok: true, turns })).toEqual({ ok: false, error: "invalid" });
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Seen live on 2026-11-24 (signed out, element structure only; the text here is made up), and the fallbacks that keep
+// Save working when a layout changes again.
+// ---------------------------------------------------------------------------
+
+const OCTANE = "https://chatgpt.com/uc/6b05b8fc-b6b0-83ea-8fd7-74faaff6107b";
+// ChatGPT's signed-out layout of 2026-11-24: li[data-message-role] inside section[data-conversation-id], a code block's
+// controls row and one-word label before its <pre>, the language on code[data-code-language], tables as data-d-components.
+const octaneQuestion = (id, body) =>
+  `<li data-message-role="user" id="${id}"><div data-submit-message-animation-target=""><div><div data-user-message-bubble=""><p data-user-message-copy="">${body}</p></div></div></div></li>`;
+const octaneReply = (id, body, { complete = true } = {}) =>
+  `<li data-message-role="assistant" id="${id}" data-assistant-content-started=""${complete ? ' data-message-complete=""' : ""}>` +
+  `<h4 data-message-attribution="" aria-label="ChatGPT said:" tabindex="-1"></h4><div><span aria-hidden="true" data-assistant-placeholder-slot="" hidden=""><span></span></span>` +
+  `<div><div><div data-assistant-markdown="" data-assistant-markdown-root=""><div aria-busy="false"><div><section aria-label="DIL content" dir="auto">${body}</section></div><div role="status"></div></div></div></div></div></div>` +
+  `<div aria-label="Response actions" data-message-actions="" role="group"><button aria-label="Copy response" data-copy-message="">Copy</button><span aria-live="polite" role="status"></span></div></li>`;
+const octaneCode = (language, lines) =>
+  `<div><span data-message-content-controls=""><button type="button" aria-label="Copy code">Copy</button></span><div><span>${language}</span></div>` +
+  `<pre><code data-code-language="${language}">${lines.map((line) => `<span>${line}</span>`).join("\n")}</code></pre></div>`;
+const octaneTable = (rows) =>
+  `<div data-d-component="table"><div data-d-table-viewport=""><table><tbody data-d-component="table-section">${rows
+    .map(
+      (row, index) =>
+        `<tr data-d-component="table-row">${row
+          .map((cell) => (index === 0 ? `<th data-d-component="table-cell"><p data-d-component="text">${cell}</p></th>` : `<td data-d-component="table-cell"><p data-d-component="text">${cell}</p></td>`))
+          .join("")}</tr>`
+    )
+    .join("")}</tbody></table></div><div aria-hidden="true" data-d-overflow-edges=""></div></div>`;
+const octanePage = (items, { stop = false } = {}) =>
+  page(
+    `<nav><a href="/uc/older">An older chat</a></nav><main data-slot="conversation"><div><section aria-label="Conversation" data-web-mobile-conversation="" data-conversation-id="6b05b8fc-b6b0-83ea-8fd7-74faaff6107b"><div data-mobile-thread=""><div data-mobile-thread-content="">` +
+      `<ol aria-label="Conversation" data-conversation-transcript="">${items.join("")}</ol></div></div></section>` +
+      `<form><textarea name="prompt"></textarea>${stop ? '<button type="button" aria-label="Stop generating"></button>' : '<button type="submit" aria-label="Send prompt"></button>'}</form></div></main>`,
+    "ChatGPT: Chat, Work, Create & Code with AI"
+  );
+
+describe("live markup, 2026-11-24", () => {
+  it("ChatGPT: reads the signed-out layout — fenced code with its language and no stray label, a table, no buttons or labels", async () => {
+    const doc = octanePage([
+      octaneQuestion("q1", "Write a Python adder, then compare tea and coffee."),
+      octaneReply("a1", `<p data-d-component="text">Here it is.</p>${octaneCode("python", ["def add(a, b):", "    return a + b"])}${octaneTable([["Tea", "Coffee"], ["Less caffeine", "More caffeine"]])}`),
+    ]);
+    const read = await readConversationFromPage(doc, OCTANE, 0);
+    expect(read).toMatchObject({ ok: true, provider: "chatgpt", strategy: "message-role" });
+    expect(read.turns).toEqual([
+      { role: "user", text: "Write a Python adder, then compare tea and coffee." },
+      { role: "assistant", text: "Here it is.\n\n```python\ndef add(a, b):\n    return a + b\n```\n\nTea | Coffee\nLess caffeine | More caffeine" },
+    ]);
+    expect(read).not.toHaveProperty("responding");
+  });
+
+  it("ChatGPT: says a reply is still being written while its Stop button shows, and reads it whole once it stops", async () => {
+    const doc = octanePage([octaneQuestion("q1", "Write an essay"), octaneReply("a1", `<p>The first half of the</p>`, { complete: false })], { stop: true });
+    const streaming = await readConversationFromPage(doc, OCTANE, 0);
+    expect(streaming).toMatchObject({ ok: true, responding: true });
+    expect(checkPageRead(streaming)).toEqual({ ok: false, error: "still-responding", diagnostics: { turns: 2 } });
+
+    setTimeout(() => {
+      doc.querySelector('[aria-label="Stop generating"]').remove();
+      doc.querySelector("section[aria-label='DIL content']").innerHTML = "<p>The whole essay.</p>";
+    }, 300);
+    const done = await readConversationFromPage(doc, OCTANE, 3000);
+    expect(done).not.toHaveProperty("responding");
+    expect(done.turns[1]).toEqual({ role: "assistant", text: "The whole essay." });
+  });
+
+  it("Gemini: a question waiting for its reply (pending-request), or a reply under a Stop button, is still responding", async () => {
+    const doc = page(`<infinite-scroller><pending-request class="conversation-container"><user-query><div class="query-text">Explain tides</div></user-query></pending-request></infinite-scroller>`);
+    expect(await readConversationFromPage(doc, "https://gemini.google.com/app/ca326f1a7f391868", 0)).toMatchObject({ ok: true, responding: true });
+    const answering = page(`<user-query><div class="query-text">Explain tides</div></user-query><model-response><message-content><p>The moon</p></message-content></model-response><button aria-label="Stop response"></button>`);
+    expect(await readConversationFromPage(answering, "https://gemini.google.com/app/ca326f1a7f391868", 0)).toMatchObject({ ok: true, responding: true });
+  });
+
+  it("Claude: a reply flagged data-is-streaming=true is still responding", async () => {
+    const doc = page(claudeRow(0, 1, claudeQuestion("Hi")) + claudeRow(1, 0, claudeReply("Hel").replace('data-is-streaming="false"', 'data-is-streaming="true"')));
+    expect(await readConversationFromPage(doc, "https://claude.ai/chat/446f8e09-fd3c-43b5-a8fa-5c5861dfb044", 0)).toMatchObject({ ok: true, responding: true });
+  });
+
+  it("Perplexity: reads a /session/ thread, its code fenced with the figcaption's language; 'Stop response (Esc)' means still responding", async () => {
+    const SESSION = "https://www.perplexity.ai/session/2c347cdf-b595-4b86-8c02-2112937b702d";
+    const answer =
+      `<div data-renderer="lm" class="prose"><pre><figure><figcaption><span>python</span><div><button aria-label="Wrap lines"></button><button aria-label="Copy code"></button></div></figcaption>` +
+      `<div><span><code><span>def add(a, b):</span>\n<span>    return a + b</span></code></span></div></figure></pre><h2 id="tea">Tea vs coffee</h2></div>`;
+    const html = (stop) =>
+      `<div data-sidebar-session-row="true"><div>Write a Python adder</div></div><div data-workflow-items="populated"><div dir="auto"><div data-message-bubble="right"><div data-renderer="lm"><p>Write a Python adder</p></div></div></div></div>` +
+      `<div data-workflow-items="populated"><div><button aria-expanded="false"><div title="Finished">Finished</div></button></div><div dir="auto">${answer}</div></div>${stop ? '<button aria-label="Stop response (Esc)"></button>' : ""}`;
+    expect(conversationIdentityOf(SESSION)).toMatchObject({ provider: "perplexity", conversationId: "2c347cdf-b595-4b86-8c02-2112937b702d" });
+    const read = await readConversationFromPage(page(html(false)), SESSION, 0);
+    expect(read.turns).toEqual([
+      { role: "user", text: "Write a Python adder" },
+      { role: "assistant", text: "```python\ndef add(a, b):\n    return a + b\n```\n\nTea vs coffee" },
+    ]);
+    expect(read).not.toHaveProperty("responding");
+    expect(await readConversationFromPage(page(html(true)), SESSION, 0)).toMatchObject({ ok: true, responding: true });
+  });
+});
+
+describe("when a layout changes: fallbacks, and an honest reason with diagnostics", () => {
+  it("ChatGPT: a layout with no known attributes is still read by its screen-reader headings", async () => {
+    const doc = page(
+      `<main><div class="thread-x"><div class="turn-a"><h5 class="sr-only">You said:</h5><div class="bubble">Why is the sky blue?</div></div>` +
+        `<div class="turn-b"><h5 class="sr-only">ChatGPT said:</h5><div class="answer"><p>Rayleigh scattering.</p><button>Copy</button></div></div></div></main>`
+    );
+    const read = await readConversationFromPage(doc, SIGNED_IN, 0);
+    expect(read).toMatchObject({ ok: true, strategy: "role-heading" });
+    expect(read.turns).toEqual([
+      { role: "user", text: "Why is the sky blue?" },
+      { role: "assistant", text: "Rayleigh scattering." },
+    ]);
+  });
+
+  it("ChatGPT: a reply's own heading that starts 'You said' is text, not a message boundary", async () => {
+    const doc = page(`<main><div><h5 class="sr-only">ChatGPT said:</h5><div><h3>You said it best</h3><p>Indeed.</p></div></div></main>`);
+    expect((await readConversationFromPage(doc, SIGNED_IN, 0)).turns).toEqual([{ role: "assistant", text: "You said it best\n\nIndeed." }]);
+  });
+
+  it("ChatGPT: reads article[data-turn] turns", async () => {
+    const doc = page(`<article data-turn="user"><div class="whitespace-pre-wrap">Hi</div></article><article data-turn="assistant"><div class="markdown"><p>Hello.</p></div></article>`);
+    expect(await readConversationFromPage(doc, SIGNED_IN, 0)).toMatchObject({ ok: true, strategy: "turn", turns: [{ role: "user", text: "Hi" }, { role: "assistant", text: "Hello." }] });
+  });
+
+  it("ChatGPT: reads the whole page when the active-page wrapper holds no messages", async () => {
+    const doc = page(`<div data-app-shell-active-page="true"><nav>Chats</nav></div><main>${unitTurn(0, "What caused WW1?", text("Militarism."))}</main>`);
+    expect((await readConversationFromPage(doc, SIGNED_IN, 0)).turns).toEqual([
+      { role: "user", text: "What caused WW1?" },
+      { role: "assistant", text: "Militarism." },
+    ]);
+  });
+
+  it("ChatGPT: never drops every turn because the page tags them with ids in another form", async () => {
+    const doc = signedInPage([unitTurn(0, "What caused WW1?", text("Militarism."), "conv_01HXYZ"), unitTurn(1, "And then?", text("War."), "conv_01HXYZ")]);
+    expect((await readConversationFromPage(doc, SIGNED_IN, 0)).turns).toHaveLength(4);
+  });
+
+  it("Claude: reads transcript rows by their row role when the message test ids are gone", async () => {
+    const doc = page(
+      `<div data-testid="transcript-row" data-perf-row="human" data-index="0" data-perf-row-from-tail="1"><h2 class="sr-only">You said: Hi</h2><div class="bubble"><p>Hi</p></div></div>` +
+        `<div data-testid="transcript-row" data-perf-row="assistant" data-index="1" data-perf-row-from-tail="0"><div data-find-omitted="" data-state="closed">Thought for 2 seconds</div><div class="reply"><p>Hello there.</p></div></div>`
+    );
+    const read = await readConversationFromPage(doc, "https://claude.ai/chat/446f8e09-fd3c-43b5-a8fa-5c5861dfb044", 0);
+    expect(read).toMatchObject({ ok: true, strategy: "transcript-row" });
+    expect(read.turns).toEqual([
+      { role: "user", text: "Hi" },
+      { role: "assistant", text: "Hello there." },
+    ]);
+  });
+
+  it("Claude: reads by its spoken labels when nothing else is left", async () => {
+    const doc = page(`<main><div><h2 class="sr-only">You said: Hi</h2><div><p>Hi</p></div></div><div><h2 class="sr-only">Claude responded: Hello.</h2><div><p>Hello.</p></div></div></main>`);
+    expect(await readConversationFromPage(doc, "https://claude.ai/chat/446f8e09-fd3c-43b5-a8fa-5c5861dfb044", 0)).toMatchObject({
+      ok: true,
+      strategy: "role-heading",
+      turns: [
+        { role: "user", text: "Hi" },
+        { role: "assistant", text: "Hello." },
+      ],
+    });
+  });
+
+  it("Gemini: reads the question and reply blocks when their custom elements are renamed", async () => {
+    const doc = page(`<div class="turn"><div class="query-text">Explain tides</div></div><div class="turn"><message-content><p>The moon pulls the sea.</p></message-content></div>`);
+    expect(await readConversationFromPage(doc, "https://gemini.google.com/app/ca326f1a7f391868", 0)).toMatchObject({
+      ok: true,
+      strategy: "content-blocks",
+      turns: [{ role: "user" }, { role: "assistant", text: "The moon pulls the sea." }],
+    });
+  });
+
+  it("Perplexity: reads the answer from its renderer when the prose class is gone", async () => {
+    const doc = page(`<div data-message-bubble="right"><div data-renderer="lm"><p>Why?</p></div></div><div><div data-renderer="lm"><p>Because.</p></div></div>`);
+    expect(await readConversationFromPage(doc, "https://www.perplexity.ai/session/2c347cdf-b595-4b86-8c02-2112937b702d", 0)).toMatchObject({
+      ok: true,
+      strategy: "bubble-renderer",
+      turns: [
+        { role: "user", text: "Why?" },
+        { role: "assistant", text: "Because." },
+      ],
+    });
+  });
+
+  it("says not-loaded while the app is still loading the conversation", async () => {
+    const doc = page(`<main><div aria-busy="true"><div class="placeholder"></div></div></main>`);
+    expect(await readConversationFromPage(doc, SIGNED_IN, 0)).toMatchObject({ ok: false, reason: "not-loaded", provider: "chatgpt", diagnostics: { loading: true } });
+  });
+
+  it("says what each strategy found when nothing is recognised — counts only, never the page's text", async () => {
+    const doc = page(`<main><div class="new-thing">A private question about my health</div><textarea></textarea></main>`, "A private title");
+    const read = await readConversationFromPage(doc, SIGNED_IN, 0);
+    expect(read).toMatchObject({
+      ok: false,
+      reason: "no-messages",
+      diagnostics: { strategies: { "unit-key": 0, "message-role": 0, turn: 0, "role-heading": 0 }, main: true, composer: true, responding: false },
+    });
+    expect(JSON.stringify(read)).not.toMatch(/private/i);
+  });
+
+  it("reads a long conversation whole and in order", async () => {
+    const turns = Array.from({ length: 150 }, (_, n) => unitTurn(n, `Question ${n}`, text(`Answer ${n}.`)));
+    const read = await readConversationFromPage(signedInPage(turns), SIGNED_IN, 0);
+    expect(read.turns).toHaveLength(300);
+    expect(read.turns[0]).toEqual({ role: "user", text: "Question 0" });
+    expect(read.turns[299]).toEqual({ role: "assistant", text: "Answer 149." });
+    expect(read.turns.every((turn, n) => turn.role === (n % 2 === 0 ? "user" : "assistant"))).toBe(true);
+  });
+});
+
+describe("checkPageRead: the extraction contract", () => {
+  it("refuses a read whose reply was still being written, and passes on the strategy that read it", () => {
+    expect(checkPageRead({ ok: true, turns: [{ role: "user", text: "Q" }], responding: true })).toEqual({ ok: false, error: "still-responding", diagnostics: { turns: 1 } });
+    expect(checkPageRead({ ok: true, turns: [{ role: "user", text: "Q" }], strategy: "message-role" })).toMatchObject({ ok: true, strategy: "message-role" });
+    expect(checkPageRead({ ok: true, turns: [{ role: "user", text: "Q" }], strategy: "<b>evil</b>" })).not.toHaveProperty("strategy");
+  });
+
+  it("passes on not-loaded, and only numbers and booleans of a failure's diagnostics", () => {
+    expect(
+      checkPageRead({ ok: false, reason: "not-loaded", diagnostics: { loading: true, elements: 4, note: "page text", strategies: { "unit-key": 0, "page text here": 3, turn: "x" } } })
+    ).toEqual({
+      ok: false,
+      error: "not-loaded",
+      diagnostics: { loading: true, elements: 4, strategies: { "unit-key": 0 } },
+    });
   });
 });

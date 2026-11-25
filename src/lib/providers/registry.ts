@@ -232,7 +232,11 @@ export const AI_PROVIDERS: Readonly<Record<AiProviderId, AiProvider>> = {
     homeUrl: "https://www.perplexity.ai/",
     newChatPaths: [/^\/$/],
     transfer: { messageChars: 15_000, maxFiles: 10 },
-    conversationPaths: [{ path: /^\/search\/([A-Za-z0-9._-]{6,200})\/?$/, kind: "chat" }],
+    // 2026-11-24: new threads open at /session/<uuid>; older ones keep /search/<slug>.
+    conversationPaths: [
+      { path: /^\/search\/([A-Za-z0-9._-]{6,200})\/?$/, kind: "chat" },
+      { path: /^\/session\/([A-Za-z0-9-]{8,80})\/?$/, kind: "chat" },
+    ],
     capabilities: {
       pageCapture: { supported: true, verified: "fixture", note: CAPTURE_NOTE },
       exportImport: {

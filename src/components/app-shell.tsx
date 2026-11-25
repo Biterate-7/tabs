@@ -95,6 +95,7 @@ import { useExtensionQuickAdd } from "@/hooks/use-extension-quick-add"
 import { useDesktopImport } from "@/hooks/use-desktop-import"
 import { useIsDesktop } from "@/hooks/use-is-desktop"
 import { desktopImport, desktopLink } from "@/lib/platform"
+import { flushDurableStorage } from "@/lib/platform/durable-storage"
 import { ExtensionPairDialog } from "@/components/extension-link/extension-pair-dialog"
 import { outcomeFromIngestion, type DesktopConversationRequest, type DesktopImportRequest, type DesktopTabsRequest } from "@/lib/desktop/import-protocol"
 import { createSession } from "@/lib/sessions/model"
@@ -1400,6 +1401,12 @@ export function AppShell() {
     const summary = await saveConversations(workspaceId, [input])
     if (summary.failed > 0) {
       toast.error("A conversation from Chrome couldn't be saved", { description: "Hubble couldn't keep its text on this device. Nothing was changed — try again." })
+      return { ok: false, reason: "storage-failed" }
+    }
+    // Hubble for Chrome is told "saved" only once the project is in Hubble Desktop's crash-safe copy on disk,
+    // not merely in WebView2's lazily written localStorage. Saving again is safe: it comes back "unchanged".
+    if ((summary.added > 0 || summary.updated > 0) && !(await flushDurableStorage())) {
+      toast.error("A conversation from Chrome may not be saved", { description: "Hubble couldn't confirm it was written to disk. Save it again from Chrome." })
       return { ok: false, reason: "storage-failed" }
     }
     const name = workspaceNamed(workspaceId)

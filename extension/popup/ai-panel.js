@@ -42,11 +42,15 @@ import { readStoredTarget } from "../src/quick-add.js";
 export const CAPTURE_ERRORS = {
   "not-supported": "Hubble can save conversations from ChatGPT, Claude, Gemini and Perplexity.",
   "not-a-conversation": "Open a conversation to save it — this page isn't one.",
-  "no-messages": "Hubble couldn't find the messages on this page (the app may have changed its layout). Reload the page and try again. If it still doesn't work, import the app's export file in Hubble: Add → Import AI chats.",
-  "empty-conversation": "There are no messages in this conversation yet. If it's still loading, wait a moment and try again.",
-  empty: "Hubble couldn't find the messages on this page. Reload the page and try again. If it still doesn't work, import the app's export file in Hubble: Add → Import AI chats.",
+  // Reading the page (ai-pages.js → checkPageRead). Nothing was saved for any of these.
+  "no-messages":
+    "Hubble didn't recognise the messages on this page — the app has probably changed its layout, so nothing was saved. Try again; if it still fails, the details below help fix it. Meanwhile you can import the app's export file in Hubble: Add → Import AI chats.",
+  "not-loaded": "This conversation is still loading, so nothing was saved. Wait until its messages appear, then Try again.",
+  "still-responding": "The reply is still being written. Hubble saves whole conversations — Try again once it has finished.",
+  "empty-conversation": "There are no messages in this conversation yet. If it's still loading, wait a moment and Try again.",
+  empty: "Hubble Desktop found no messages in what was read, so nothing was saved. Try again.",
   "page-unreadable": "Chrome didn't let Hubble read this page. Reload it and try again.",
-  "read-failed": "Hubble couldn't read this conversation's layout. Reload the page and try again. If it still doesn't work, import the app's export file in Hubble: Add → Import AI chats.",
+  "read-failed": "Hubble hit an error reading this page, so nothing was saved. Try again; if it keeps happening, the details below say what went wrong.",
   "project-missing": "That project isn't in Hubble any more. Choose another one.",
   "storage-failed": "Hubble couldn't keep the conversation on this device, so nothing was saved. Try again.",
   invalid: "That didn't come through as a conversation. Reload the page and try again.",
@@ -78,6 +82,27 @@ export const CAPTURE_ERRORS = {
 
 export function captureError(reason) {
   return CAPTURE_ERRORS[reason] ?? CAPTURE_ERRORS.failed;
+}
+
+/** Reading the page failed in a way that pressing Try again (no reload) can fix: the page may have caught up. */
+export const READ_RETRY_REASONS = new Set(["no-messages", "not-loaded", "still-responding", "empty-conversation", "read-failed", "tab-changed", "already-saving"]);
+
+/**
+ * A failed read's details, for a bug report: the app, the reason, and what
+ * each of the reader's strategies found — counts only, never the page's text.
+ * "" when there is nothing more to say than the status already does.
+ */
+export function describeReadDetails(answer) {
+  if (!answer || answer.ok || !["no-messages", "read-failed", "not-loaded", "page-unreadable", "invalid"].includes(answer.error)) return "";
+  const parts = [typeof answer.provider === "string" ? answer.provider : "", answer.error];
+  const diagnostics = answer.diagnostics && typeof answer.diagnostics === "object" ? answer.diagnostics : {};
+  const strategies = diagnostics.strategies && typeof diagnostics.strategies === "object" ? Object.entries(diagnostics.strategies).filter(([, count]) => Number.isFinite(count)) : [];
+  if (strategies.length > 0) parts.push(`found ${strategies.map(([name, count]) => `${name} ${count}`).join(", ")}`);
+  const marks = ["main", "thread", "composer", "loading", "responding", "activePage"].filter((mark) => diagnostics[mark] === true);
+  if (marks.length > 0) parts.push(marks.join(" "));
+  if (Number.isFinite(diagnostics.elements)) parts.push(`${diagnostics.elements} elements`);
+  if (typeof answer.detail === "string" && answer.detail) parts.push(answer.detail.slice(0, 200));
+  return `Details: ${parts.filter(Boolean).join(" · ")}`;
 }
 
 // Why a save is still waiting, in a few words: what it waits for is said after.
@@ -521,14 +546,21 @@ export async function initAiPanel(activeTab, doc = document) {
     say(savedState, describeSavedState(readSavedPlaces(answer.result.saved)));
   }
 
-  captureButton.addEventListener("click", async () => {
+  // A read that failed in a way Try again can fix: Try again reads the page again (no reload needed).
+  let readRetry = false;
+  const details = el("capture-details");
+
+  async function capture() {
     if (!identity || savingThis() || (!toDesktop && !projectId())) return;
     const key = identity.key;
     saving.add(key);
     updateButtons();
+    readRetry = false;
+    if (details) say(details, "");
     // Hubble Desktop comes to the front to ask for a project, which usually closes this popup: the page's toast then says how it went.
     // On the web this is the read; "Saving to …" follows once the job is written (followJobs), "Saved" only on Hubble's answer.
-    say(captureStatus, toDesktop ? "Choose a project in Hubble Desktop…" : "Reading the conversation…");
+    // Paired with a project chosen here, the read is followed by "Saving to …" and "Saved" only once Hubble Desktop has it on disk.
+    say(captureStatus, toDesktop && !projectId() ? "Reading the conversation… then choose a project in Hubble Desktop." : "Reading the conversation…");
     if (retryButton) retryButton.hidden = true;
     const answer = await send(MSG_CAPTURE_CONVERSATION, { tabId: tab.id, expectedKey: key, ...(projectId() ? { workspaceId: projectId() } : {}) });
     saving.delete(key);
@@ -538,12 +570,15 @@ export async function initAiPanel(activeTab, doc = document) {
       return;
     }
     await reportCaptureAnswer(answer);
-  });
+  }
+  captureButton.addEventListener("click", () => void capture());
 
   /** A save's answer, from Save or Try again: what it did, or why not — and Try again while it can still go in. */
   async function reportCaptureAnswer(answer) {
     shownJob = answer?.job;
-    if (retryButton) retryButton.hidden = !canRetryJob(answer?.job);
+    readRetry = !answer?.ok && !answer?.job && READ_RETRY_REASONS.has(answer?.error);
+    if (retryButton) retryButton.hidden = !(canRetryJob(answer?.job) || readRetry);
+    if (details) say(details, describeReadDetails(answer));
     if (answer?.ok) {
       say(captureStatus, describeCapture(answer.result, answer.result?.project || answer.job?.projectName || projectName()));
       if (!answer.result?.desktop) openButton.hidden = true;
@@ -567,6 +602,8 @@ export async function initAiPanel(activeTab, doc = document) {
   }
 
   retryButton?.addEventListener("click", async () => {
+    // Nothing was read yet: read the page again.
+    if (readRetry && !shownJob) return void capture();
     const job = shownJob;
     if (!job?.id || !identity || job.key !== identity.key || savingThis()) return;
     const key = identity.key;
@@ -648,6 +685,8 @@ export async function initAiPanel(activeTab, doc = document) {
     }
     lookupToken += 1;
     say(captureStatus, "");
+    readRetry = false;
+    if (details) say(details, "");
     showJob(undefined);
     if (savedState) say(savedState, "");
     if (!aiProviderOf(tab.url)) {
