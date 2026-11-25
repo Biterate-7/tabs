@@ -3,7 +3,7 @@
 // itself with only chrome.runtime/storage mocked.
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { MSG_CAPTURE_CONVERSATION, MSG_DESKTOP_STATUS, MSG_MEMORY_REQUEST } from "../src/config.js";
-import { captureError, conversationTitleOf, describeCapture, describeReadDetails, describeSavedState, initAiPanel, readHits, readPanelProjects, readSavedPlaces } from "./ai-panel.js";
+import { READING, captureError, conversationTitleOf, describeCapture, describeReadDetails, describeSavedState, initAiPanel, readHits, readPanelProjects, readSavedPlaces } from "./ai-panel.js";
 
 describe("describeCapture", () => {
   it("says what a save did, in words", () => {
@@ -149,7 +149,7 @@ describe("the Save button on a ChatGPT conversation", () => {
     button().click();
     expect(button().disabled).toBe(true);
     // Capturing: the read comes first; "Saved" only on Hubble's answer.
-    expect(status()).toBe("Reading the conversation…");
+    expect(status()).toBe(READING);
     await settle();
     expect(captures).toEqual([{ tabId: 7, expectedKey: KEY, workspaceId: "phys" }]);
     expect(status()).toBe("Saved to Physics · 10 turns. Older messages hadn't loaded yet — scroll to the top of the chat and save again to include them.");
@@ -176,7 +176,7 @@ describe("the Save button on a ChatGPT conversation", () => {
     expect(details().textContent).toBe("Details: chatgpt · no-messages · found unit-key 0, message-role 0 · main · 812 elements");
     expect(retry().hidden).toBe(false);
     retry().click();
-    expect(status()).toBe("Reading the conversation…");
+    expect(status()).toBe(READING);
     await settle();
     expect(captures).toHaveLength(2);
     expect(status()).toBe("Saved to Physics · 6 turns");
@@ -314,7 +314,7 @@ describe("the Save button on a ChatGPT conversation", () => {
       expect(status()).toBe("Hubble Desktop is open. You'll choose the project there.");
       expect(document.getElementById("ai-open-hubble-button").hidden).toBe(true);
       button().click();
-      expect(status()).toBe("Reading the conversation… then choose a project in Hubble Desktop.");
+      expect(status()).toBe(`${READING} Then choose a project in Hubble Desktop.`);
       await settle();
       expect(captures).toEqual([{ tabId: 7, expectedKey: KEY }]);
       expect(status()).toBe("Saved to Biology · 4 turns");

@@ -4,7 +4,7 @@
 // failed — never "Saved" for a save that is only on its way.
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { CAPTURE_JOBS_KEY, MSG_CAPTURE_CONVERSATION, MSG_CAPTURE_RETRY, MSG_CAPTURE_STATUS, MSG_DESKTOP_STATUS, MSG_MEMORY_REQUEST, PROJECTS_SNAPSHOT_KEY } from "../src/config.js";
-import { describeCaptureJob, initAiPanel } from "./ai-panel.js";
+import { READING, describeCaptureJob, initAiPanel } from "./ai-panel.js";
 
 const TAB = { id: 7, windowId: 1, url: "https://chatgpt.com/c/6ad062bc-2bcc-83e8-9305-06038d74964f", title: "Integration by parts - ChatGPT", active: true };
 const KEY = "chatgpt:chat:6ad062bc-2bcc-83e8-9305-06038d74964f";
@@ -99,7 +99,7 @@ describe("a save's state", () => {
     const queued = job({ status: "queued", error: "timeout", nextAttemptAt: Date.now() + 5000 });
     await mount({ hubbleOpen: true, answers: { [MSG_CAPTURE_CONVERSATION]: { ok: false, error: "timeout", queued: true, job: queued } } });
     save().click();
-    expect(status()).toBe("Reading the conversation…");
+    expect(status()).toBe(READING);
     await settle();
     expect(status()).toMatch(/^Not saved yet — Hubble Desktop didn't answer in time\. Hubble for Chrome will try again in \d s\.$/);
     expect(status()).not.toMatch(/Saved to/);

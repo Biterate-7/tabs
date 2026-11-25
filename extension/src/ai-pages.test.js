@@ -870,7 +870,9 @@ describe("when a layout changes: fallbacks, and an honest reason with diagnostic
     expect(read.turns[0]).toEqual({ role: "user", text: "Question 0" });
     expect(read.turns[299]).toEqual({ role: "assistant", text: "Answer 149." });
     expect(read.turns.every((turn, n) => turn.role === (n % 2 === 0 ? "user" : "assistant"))).toBe(true);
-  });
+    // jsdom's selector engine scans the whole document for every query scoped to an element, so 300 messages take
+    // seconds here (the same read took 3–24 ms in Chrome on a live chat, 2026-11-25): the default 5 s is too tight.
+  }, 60_000);
 });
 
 describe("checkPageRead: the extraction contract", () => {
@@ -889,4 +891,209 @@ describe("checkPageRead: the extraction contract", () => {
       diagnostics: { loading: true, elements: 4, strategies: { "unit-key": 0 } },
     });
   });
+});
+
+// ChatGPT signed in as served on 2026-11-25 (seen live, structure only): the reply's root is
+// [data-markdown-text-style="assistant-message"]; [data-markdown-copy="contents"] — the reply root of 2026-10 —
+// now marks a small inline chip inside a reply; a reply's body is drawn a moment after its turn; and a long chat
+// is windowed: only turns near the screen are in the page, older ones load at the top, and the content-search
+// keys ("fallback-turn-N:…") count from the first turn loaded, so they shift. Only data-turn-key is stable.
+describe("ChatGPT, signed in (live markup, 2026-11-25)", () => {
+  const reply = (body) => `<div data-markdown-text-style="assistant-message">${body}</div>`;
+  const chip = (label) => `<span data-markdown-copy="contents"><span>${label}</span></span>`;
+
+  it("reads the whole reply when an inline chip carries the old reply-root marker, not just the chip", async () => {
+    const doc = signedInPage([
+      unitTurn(0, "Plan the redesign", reply(`${text(`Start with the ${chip("Command Centre")} rail.`)}${text("Then the graph.")}`)),
+      unitTurn(1, "And then?", reply(text("Ship it."))),
+    ]);
+    // unitTurn wraps its answer in [data-markdown-copy="contents"]; the live page no longer does.
+    for (const wrapper of doc.querySelectorAll('[data-chatgpt-copy-reference][data-markdown-copy="contents"]')) wrapper.removeAttribute("data-markdown-copy");
+    const read = await readConversationFromPage(doc, SIGNED_IN, 0);
+    expect(read.turns).toEqual([
+      { role: "user", text: "Plan the redesign" },
+      { role: "assistant", text: "Start with the Command Centre rail.\n\nThen the graph." },
+      { role: "user", text: "And then?" },
+      { role: "assistant", text: "Ship it." },
+    ]);
+    expect(read).not.toHaveProperty("partial");
+  });
+
+  it("waits for a reply whose body is drawn after its turn, rather than saving the question alone", async () => {
+    const doc = signedInPage([unitTurn(0, "What caused WW1?", "")]);
+    const body = doc.querySelector('[data-content-search-unit-key$=":assistant"] [data-d-inline-reveal]');
+    setTimeout(() => {
+      body.innerHTML = text("Militarism and alliances.");
+    }, 300);
+    const read = await readConversationFromPage(doc, SIGNED_IN, 3000);
+    expect(read.turns).toEqual([
+      { role: "user", text: "What caused WW1?" },
+      { role: "assistant", text: "Militarism and alliances." },
+    ]);
+    expect(read).not.toHaveProperty("partial");
+  });
+
+  it("says partial when a reply is still not drawn once the wait is over — never a silent loss", async () => {
+    const doc = signedInPage([unitTurn(0, "First?", ""), unitTurn(1, "Second?", text("Second answer."))]);
+    const read = await readConversationFromPage(doc, SIGNED_IN, 300);
+    expect(read).toMatchObject({ ok: true, partial: true });
+    expect(read.turns.map((turn) => turn.role)).toEqual(["user", "user", "assistant"]);
+  });
+
+  // A thread that windows like ChatGPT's: 100px a turn, a 200px box, only turns near the screen mounted, older
+  // turns loaded five at a time when the box reaches its top (keeping what was on screen in place).
+  function windowedChat(total, loaded, { snapOnce } = {}) {
+    const doc = signedInPage([]);
+    const thread = doc.querySelector('[data-thread-find-target="conversation"]');
+    const list = thread.querySelector(":scope > div:last-child");
+    thread.setAttribute("style", "overflow-y: auto");
+    const state = { from: total - loaded, top: 0, writes: 0 };
+    const status = doc.createElement("div");
+    status.innerHTML = `<div role="status"><span>Loading older messages…</span></div>`;
+    thread.insertBefore(status, list);
+    const height = () => (total - state.from) * 100;
+    const draw = () => {
+      status.hidden = state.from === 0;
+      const html = [];
+      for (let n = state.from; n < total; n++) {
+        const y = (n - state.from) * 100;
+        if (y + 100 < state.top - 100 || y > state.top + 300) continue;
+        html.push(unitTurn(n, `Question ${n}`, text(`Answer ${n}.`)).replaceAll(`fallback-turn-${n}:`, `fallback-turn-${n - state.from}:`));
+      }
+      list.innerHTML = html.join("");
+    };
+    Object.defineProperty(thread, "clientHeight", { get: () => 200 });
+    Object.defineProperty(thread, "scrollHeight", { get: height });
+    Object.defineProperty(thread, "scrollTop", {
+      get: () => state.top,
+      set: (value) => {
+        state.writes += 1;
+        state.top = Math.max(0, Math.min(height() - 200, Math.round(value)));
+        draw();
+        // The app snapping the thread to its end on its own, once, mid-way down.
+        if (snapOnce && state.from === 0 && state.top >= snapOnce) {
+          snapOnce = 0;
+          setTimeout(() => {
+            state.top = height() - 200;
+            draw();
+          }, 30);
+        }
+        if (state.top === 0 && state.from > 0)
+          setTimeout(() => {
+            const added = Math.min(5, state.from);
+            state.from -= added;
+            state.top += added * 100;
+            draw();
+          }, 50);
+      },
+    });
+    state.top = height() - 200;
+    draw();
+    return { doc, state };
+  }
+
+  it("Save scrolls a windowed chat through and keeps every message once, in order, then puts the scroll back", async () => {
+    const { doc, state } = windowedChat(12, 4);
+    const read = await readConversationFromPage(doc, SIGNED_IN, 0, 20000);
+    expect(read.turns).toHaveLength(24);
+    expect(read.turns.map((turn) => turn.text)).toEqual(Array.from({ length: 12 }, (_, n) => [`Question ${n}`, `Answer ${n}.`]).flat());
+    expect(read).not.toHaveProperty("partial");
+    expect(read).not.toHaveProperty("olderNotLoaded");
+    expect(state.top).toBe((12 - state.from) * 100 - 200);
+  }, 30000);
+
+  it("keeps its place when the app snaps the thread to its end mid-way, and still reads the middle", async () => {
+    const { doc } = windowedChat(16, 4, { snapOnce: 500 });
+    // ChatGPT snaps back to the latest reply when the thread moves with no sign of a person scrolling: each move is
+    // announced with a wheel event first.
+    const thread = doc.querySelector('[data-thread-find-target="conversation"]');
+    let wheels = 0;
+    thread.addEventListener("wheel", () => (wheels += 1));
+    const read = await readConversationFromPage(doc, SIGNED_IN, 0, 30000);
+    expect(read.turns.map((turn) => turn.text)).toEqual(Array.from({ length: 16 }, (_, n) => [`Question ${n}`, `Answer ${n}.`]).flat());
+    expect(read).not.toHaveProperty("partial");
+    expect(wheels).toBeGreaterThan(5);
+  }, 40000);
+
+  it("the passive read (no collect time) never scrolls the person's page, and says what it did not have", async () => {
+    const { doc, state } = windowedChat(12, 4);
+    const read = await readConversationFromPage(doc, SIGNED_IN, 0);
+    expect(state.writes).toBe(0);
+    expect(read).toMatchObject({ ok: true, olderNotLoaded: true });
+    expect(read.turns.length).toBeLessThan(24);
+  });
+
+  it("says partial when the scroll-through runs out of time", async () => {
+    const { doc } = windowedChat(40, 4);
+    const read = await readConversationFromPage(doc, SIGNED_IN, 0, 800);
+    expect(read).toMatchObject({ ok: true, partial: true });
+  }, 15000);
+});
+
+describe("Claude, signed in (live markup, 2026-11-25)", () => {
+  const CLAUDE = "https://claude.ai/chat/98d51b6c-9a25-4117-97c9-759bb09d81c0";
+  // Each row carries data-perf-row (human / assistant) and its place in the whole chat; some questions have lost
+  // their user-message test id.
+  const row = (index, role, inner) => `<div data-testid="transcript-row" data-index="${index}" data-perf-row="${role}">${inner}</div>`;
+  const bare = (text) => `<div data-user-scope=""><div data-turn-key="q${text.length}"><p class="whitespace-pre-wrap">${text}</p></div></div>`;
+  const tagged = (text) => `<div data-user-scope=""><div data-turn-key="q${text.length}"><div data-testid="user-message"><p>${text}</p></div></div></div>`;
+  const answer = (text) => `<div data-reply-scope=""><div data-testid="assistant-message"><div class="standard-markdown"><p>${text}</p></div></div></div>`;
+
+  it("keeps a question that lost its user-message test id, rather than the first strategy that found both sides", async () => {
+    const doc = page(row(0, "human", bare("First question")) + row(1, "assistant", answer("First answer.")) + row(2, "human", tagged("Second question")) + row(3, "assistant", answer("Second answer.")));
+    const read = await readConversationFromPage(doc, CLAUDE, 0);
+    expect(read.turns).toEqual([
+      { role: "user", text: "First question" },
+      { role: "assistant", text: "First answer." },
+      { role: "user", text: "Second question" },
+      { role: "assistant", text: "Second answer." },
+    ]);
+    expect(read).not.toHaveProperty("partial");
+  });
+
+  it("keeps a question that was only an attached file, by the file's name, so the chat still starts with the question", async () => {
+    const file = `<div data-user-scope=""><div data-turn-key="q0"><div data-find-omitted=""><div data-testid="file-thumbnail"><span aria-hidden="true"></span><div data-cds-card-body=""><span>Thesis draft.pdf</span><span>.pdf</span><bdi>PDF</bdi></div></div></div></div></div>`;
+    const doc = page(row(0, "human", file) + row(1, "assistant", answer("Read it.")) + row(2, "human", tagged("Thoughts?")) + row(3, "assistant", answer("Strong.")));
+    const read = await readConversationFromPage(doc, CLAUDE, 0);
+    expect(read.turns).toEqual([
+      { role: "user", text: "[Attached file: Thesis draft.pdf]" },
+      { role: "assistant", text: "Read it." },
+      { role: "user", text: "Thoughts?" },
+      { role: "assistant", text: "Strong." },
+    ]);
+  });
+
+  it("says empty-conversation for a chat Claude itself says is empty (one opened only for an artifact)", async () => {
+    const doc = page(`<div data-testid="transcript-list"><div data-testid="empty-conversation-line">This conversation has no messages yet</div></div><div data-testid="chat-input" contenteditable="true"></div>`);
+    expect(await readConversationFromPage(doc, CLAUDE, 0)).toMatchObject({ ok: false, reason: "empty-conversation", provider: "claude" });
+  });
+
+  it("Save collects a windowed Claude chat by each row's place in it, even when turn ids repeat", async () => {
+    const doc = page(`<div id="box" style="overflow-y: auto"><div id="rows"></div></div>`);
+    const box = doc.getElementById("box");
+    const rows = doc.getElementById("rows");
+    // Questions carry their testid only on some rows, so the strategy that reads a screen changes as it scrolls.
+    const all = Array.from({ length: 10 }, (_, n) => (n % 2 === 1 ? row(n, "assistant", answer(`Answer ${n}.`)) : row(n, "human", n % 4 === 0 ? bare("Same length?") : tagged("Same length?"))));
+    let top = 800;
+    const draw = () => {
+      const first = Math.floor(top / 100);
+      rows.innerHTML = all.slice(Math.max(0, first - 1), first + 3).join("");
+    };
+    Object.defineProperty(box, "clientHeight", { get: () => 200 });
+    Object.defineProperty(box, "scrollHeight", { get: () => 1000 });
+    Object.defineProperty(box, "scrollTop", {
+      get: () => top,
+      set: (value) => {
+        top = Math.max(0, Math.min(800, Math.round(value)));
+        draw();
+      },
+    });
+    draw();
+    const read = await readConversationFromPage(doc, CLAUDE, 0, 20000);
+    expect(read.turns).toHaveLength(10);
+    expect(read.turns.filter((turn) => turn.role === "user")).toHaveLength(5);
+    expect(read.turns.map((turn) => turn.text).filter((text) => text.startsWith("Answer"))).toEqual(["Answer 1.", "Answer 3.", "Answer 5.", "Answer 7.", "Answer 9."]);
+    expect(read).not.toHaveProperty("partial");
+    expect(top).toBe(800);
+  }, 30000);
 });

@@ -38,6 +38,9 @@ import { readStoredTarget } from "../src/quick-add.js";
  * shown against the wrong chat.
  */
 
+/** While Save reads the page: a long chat is scrolled through (ai-pages.js), so the page moving is expected. */
+export const READING = "Reading the conversation… (Hubble scrolls through a long chat to keep every message)";
+
 /** What to say for each reason a save can fail. */
 export const CAPTURE_ERRORS = {
   "not-supported": "Hubble can save conversations from ChatGPT, Claude, Gemini and Perplexity.",
@@ -560,7 +563,7 @@ export async function initAiPanel(activeTab, doc = document) {
     // Hubble Desktop comes to the front to ask for a project, which usually closes this popup: the page's toast then says how it went.
     // On the web this is the read; "Saving to …" follows once the job is written (followJobs), "Saved" only on Hubble's answer.
     // Paired with a project chosen here, the read is followed by "Saving to …" and "Saved" only once Hubble Desktop has it on disk.
-    say(captureStatus, toDesktop && !projectId() ? "Reading the conversation… then choose a project in Hubble Desktop." : "Reading the conversation…");
+    say(captureStatus, toDesktop && !projectId() ? `${READING} Then choose a project in Hubble Desktop.` : READING);
     if (retryButton) retryButton.hidden = true;
     const answer = await send(MSG_CAPTURE_CONVERSATION, { tabId: tab.id, expectedKey: key, ...(projectId() ? { workspaceId: projectId() } : {}) });
     saving.delete(key);

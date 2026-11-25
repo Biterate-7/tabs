@@ -158,8 +158,25 @@ export function isConversationUrl(url) {
  * blocks keep their lines and come back fenced with their language, list
  * items keep a marker, table cells stay on their row, and the app's own
  * labels and buttons ("ChatGPT said:", "Copy code") are left out.
+ *
+ * A message whose element is there but whose text is not yet drawn (ChatGPT
+ * paints a reply's body a moment after its turn, 2026-11-25) is waited for,
+ * never silently left out: a read that still lacks one when the wait ends
+ * says `partial`, and a question left without its reply counts as one.
+ *
+ * ## Long chats: scrolling through (Save only)
+ *
+ * ChatGPT (signed in, 2026-11-25), Claude and Perplexity keep only the
+ * messages near the screen in the page — scrolling mounts others and
+ * unmounts these — so no single read holds a long chat. With `collectMs`
+ * (Save passes it; the passive read never does, so it never moves the
+ * person's page), when the messages carry the app's own keys and sit in a
+ * scrolling thread, the reader scrolls that thread to its top (loading older
+ * messages), then down a screen at a time, collecting each message once by
+ * its key in page order, and puts the scroll back where it was. A pass that
+ * runs out of time says `partial`.
  */
-export async function readConversationFromPage(doc, href, waitMs = 3000) {
+export async function readConversationFromPage(doc, href, waitMs = 3000, collectMs = 0) {
   const page = doc || document;
   const address = href || location.href;
   const MAX_TOTAL = 2000000;
@@ -198,13 +215,69 @@ export async function readConversationFromPage(doc, href, waitMs = 3000) {
     "[data-find-omitted]",
   ].join(", ");
   const CODE = "[data-code-block], pre";
+  // A file the person attached (Claude's file card, 2026-11-25): kept as its name, even where it sits in a part
+  // the app hides from search, so a question that was only a file keeps its place in the chat.
+  const ATTACHMENT = '[data-testid="file-thumbnail"]';
+  const attachmentOf = (card) => {
+    const leaf = [...card.querySelectorAll("*")].find((el) => !el.firstElementChild && (el.textContent || "").trim());
+    const name = ((leaf || card).textContent || "").replace(/\s+/g, " ").trim().slice(0, 200);
+    return name ? `[Attached file: ${name}]` : "[Attached file]";
+  };
   const LANGUAGE = /^[A-Za-z][\w+#.-]{0,19}$/;
   const BLOCK = new Set(["ADDRESS", "ARTICLE", "ASIDE", "BLOCKQUOTE", "DD", "DETAILS", "DIV", "DL", "DT", "FIELDSET", "FIGCAPTION", "FIGURE", "FOOTER", "FORM", "H1", "H2", "H3", "H4", "H5", "H6", "HEADER", "HR", "LI", "MAIN", "NAV", "OL", "P", "SECTION", "SUMMARY", "TABLE", "TBODY", "TFOOT", "THEAD", "TR", "UL"]);
   const PARAGRAPH = new Set(["P", "H1", "H2", "H3", "H4", "H5", "H6", "BLOCKQUOTE", "TABLE", "UL", "OL", "FIGURE"]);
   const HOLD = "";
+  // Where an app keeps a message's own key, in order: Claude's row in the whole chat, Perplexity's entry, ChatGPT's
+  // turn id (data-turn-key, a UUID — its content-search keys "fallback-turn-18:0:user" count from the first turn
+  // loaded, so they shift as older ones load, 2026-11-25), a message id.
+  const KEY_HOLDERS = [
+    ["data-index", '[data-testid="transcript-row"][data-index], [data-perf-row][data-index]'],
+    ["data-workflow-entry", "[data-workflow-entry]"],
+    ["data-turn-key", "[data-turn-key]"],
+    ["data-message-id", "[data-message-id]"],
+  ];
+  // What the last read found, message by message (key, role, text — "" for one not drawn yet), for the waits below.
+  let last = null;
+  // Whether the page shows an element: not inside [hidden], and drawn where the browser can tell (checkVisibility).
+  const visible = (el) => !el.closest("[hidden]") && (typeof el.checkVisibility !== "function" || el.checkVisibility());
+
+  // Messages into turns: blank ones left out (the read says so), one reply split across several nodes kept as one
+  // turn, and no more than MAX_TOTAL characters in all.
+  const assemble = (messages) => {
+    const turns = [];
+    let total = 0;
+    for (const message of messages) {
+      if (!message.text || total >= MAX_TOTAL) continue;
+      const kept = message.text.slice(0, MAX_TOTAL - total);
+      total += kept.length;
+      const prior = turns[turns.length - 1];
+      if (prior && prior.role === message.role && message.role === "assistant") prior.text = `${prior.text}\n\n${kept}`;
+      else turns.push({ role: message.role, text: kept });
+    }
+    return { turns, truncated: total >= MAX_TOTAL };
+  };
+  // A question followed straight by another question: the reply between them is missing from this read.
+  const unanswered = (turns) => turns.some((turn, index) => turn.role === "user" && turns[index + 1] && turns[index + 1].role === "user");
+  // Two replies (or questions) from different rows side by side: the message between them is missing. Turns can't
+  // show it — two replies in a row become one turn — so this looks at the keyed messages.
+  const holderOf = (key) => (key || "").replace(/:(user|assistant):[0-9]+$/, "");
+  const gapped = (messages) => {
+    const read = messages.filter((message) => message.text);
+    return read.some((message, index) => {
+      const next = read[index + 1];
+      return next && next.role === message.role && message.key && next.key && holderOf(message.key) !== holderOf(next.key);
+    });
+  };
 
   // Elements in document order, without any that sit inside another match (a wrapper and its inner node are one message).
-  const outermost = (elements) => elements.filter((el) => !elements.some((other) => other !== el && other.contains(el)));
+  // Linear: each element's ancestors are checked against the set, not every pair (a 300-message chat took seconds).
+  const outermost = (elements) => {
+    const set = new Set(elements);
+    return elements.filter((el) => {
+      for (let parent = el.parentElement; parent; parent = parent.parentElement) if (set.has(parent)) return false;
+      return true;
+    });
+  };
 
   // The language a code block declares on its code element, lower-cased, or "".
   const declaredLanguage = (el) => {
@@ -289,7 +362,21 @@ export async function readConversationFromPage(doc, href, waitMs = 3000) {
           } else out += value.includes("\n") ? value : value.replace(/[ \t\f\v]{2,}/g, " ");
           return;
         }
-        if (node.nodeType !== 1 || node.matches(SKIP) || omit.has(node)) return;
+        if (node.nodeType !== 1) return;
+        if (!verbatim && node.matches(ATTACHMENT)) {
+          breakTo(1);
+          out += attachmentOf(node);
+          breakTo(1);
+          return;
+        }
+        if (node.matches(SKIP) || omit.has(node)) {
+          if (!verbatim) for (const card of node.querySelectorAll(ATTACHMENT)) {
+            breakTo(1);
+            out += attachmentOf(card);
+            breakTo(1);
+          }
+          return;
+        }
         // A formula (KaTeX) as the TeX it was written in, not its rendered glyphs followed by that TeX.
         // Gemini also keeps the TeX on the formula's wrapper (data-math), read there first: it is there even when KaTeX's MathML copy is not.
         const wrapped = !verbatim && node.matches(".math-inline[data-math], .math-block[data-math]") && (node.getAttribute("data-math") || "").trim();
@@ -354,11 +441,16 @@ export async function readConversationFromPage(doc, href, waitMs = 3000) {
         .replace(new RegExp(`${HOLD}(\\d+)${HOLD}`, "g"), (_, index) => code[Number(index)]);
     };
 
-    // The first selector that matches inside `el` — every match of it, a reply can come in parts.
+    // The first selector that matches inside `el` — every match of it, a reply can come in parts — and holds most
+    // of the message. A match holding only a sliver is not the body: on 2026-11-25 ChatGPT's old reply root
+    // ([data-markdown-copy="contents"]) marked a small inline chip inside the reply, and reading only that chip
+    // dropped the whole reply. The whole message is read then, its labels and buttons still left out.
     const bodyOf = (el, selectors) => {
+      const whole = (el.textContent || "").trim().length;
       for (const selector of selectors) {
         const matches = outermost([...el.querySelectorAll(selector)]);
-        if (matches.length > 0) return matches;
+        const held = matches.reduce((sum, match) => sum + (match.textContent || "").trim().length, 0);
+        if (matches.length > 0 && held * 2 >= whole) return matches;
       }
       return [el];
     };
@@ -370,14 +462,21 @@ export async function readConversationFromPage(doc, href, waitMs = 3000) {
     const byHeading = (assistant) => (scope) => {
       const used = new Set();
       const found = [];
-      for (const heading of all(scope, "h1, h2, h3, h4, h5, h6, [role='heading']")) {
-        const said = (heading.getAttribute("aria-label") || heading.textContent || "").trim();
-        const role = /^you said\b/i.test(said) ? "user" : assistant.test(said) ? "assistant" : undefined;
-        // A heading in a reply that happens to start "You said" is text: only a label (hidden, or ending in ":") counts.
-        if (!role || !(heading.matches(HIDDEN) || /^[^:]{0,40}:/.test(said))) continue;
+      const labels = all(scope, "h1, h2, h3, h4, h5, h6, [role='heading']")
+        .map((heading) => {
+          const said = (heading.getAttribute("aria-label") || heading.textContent || "").trim();
+          const role = /^you said\b/i.test(said) ? "user" : assistant.test(said) ? "assistant" : undefined;
+          // A heading in a reply that happens to start "You said" is text: only a label (hidden, or ending in ":") counts.
+          return role && (heading.matches(HIDDEN) || /^[^:]{0,40}:/.test(said)) ? { heading, role } : undefined;
+        })
+        .filter(Boolean);
+      for (const { heading, role } of labels) {
         const own = (heading.textContent || "").trim();
         let el = heading.parentElement;
         while (el && el !== page.body && !(el.textContent || "").replace(own, "").trim()) el = el.parentElement;
+        // A label whose message has no text yet (a reply still to be drawn) climbs into the turn around it: that
+        // wrapper holds another message's label, so it is not this message — never read a question as its reply.
+        if (el && labels.some((other) => other.heading !== heading && el.contains(other.heading))) continue;
         if (!el || el === page.body || used.has(el)) continue;
         used.add(el);
         omit.add(heading);
@@ -386,7 +485,8 @@ export async function readConversationFromPage(doc, href, waitMs = 3000) {
       return found;
     };
 
-    const CHATGPT_BODY = ['[data-markdown-copy="contents"]', "[data-assistant-markdown-root]", ".markdown", "[data-user-message-bubble]", ".whitespace-pre-wrap"];
+    // 2026-11-25 (signed in): the reply's root is [data-markdown-text-style="assistant-message"].
+    const CHATGPT_BODY = ["[data-markdown-text-style]", '[data-markdown-copy="contents"]', "[data-assistant-markdown-root]", ".markdown", "[data-user-message-bubble]", ".whitespace-pre-wrap"];
     const ADAPTERS = {
       chatgpt: [
         // Signed in at /c/ (2026-10-15): one element per message, keyed "<turn>:<n>:<role>".
@@ -444,6 +544,32 @@ export async function readConversationFromPage(doc, href, waitMs = 3000) {
       return section ? [...tagged, section.getAttribute("data-conversation-id")] : tagged;
     };
 
+    // The app's own key for a message, stable while it is scrolled out of the page and back: its turn's id
+    // (ChatGPT), or its row's place in the whole chat (Claude, Perplexity), with its role and order there.
+    // Undefined when the page gives none — that read cannot be collected across scrolling.
+    const keysOf = (items) => {
+      const seen = new Map();
+      return items.map((item) => {
+        // The first kind of key, in KEY_HOLDERS' order, that a wrapper of the message carries — the same for every
+        // strategy, which can change from one screen to the next (Claude's message test ids or its rows), and never
+        // a wrapper of an earlier turn that happens to hold this one.
+        let holder;
+        let name;
+        for (const [attribute, selector] of KEY_HOLDERS) {
+          holder = item.el.closest(selector);
+          if (holder) {
+            name = attribute;
+            break;
+          }
+        }
+        if (!holder) return undefined;
+        const slot = `${name}=${holder.getAttribute(name)}:${item.role}`;
+        const nth = seen.get(holder)?.[item.role] || 0;
+        seen.set(holder, { ...seen.get(holder), [item.role]: nth + 1 });
+        return `${slot}:${nth}`;
+      });
+    };
+
     const tried = {};
     let picked;
     for (const scope of scopes) {
@@ -453,27 +579,26 @@ export async function readConversationFromPage(doc, href, waitMs = 3000) {
           const ids = idsOf(item.el);
           return ids.length === 0 || ids.includes(chatId);
         });
-        const turns = [];
-        let total = 0;
-        for (const item of items) {
+        const keys = keysOf(items);
+        const messages = items.map((item, index) => {
           const body = BODY[provider][item.role];
-          const text = textOf(body.length > 0 ? bodyOf(item.el, body) : [item.el]);
-          if (!text || total >= MAX_TOTAL) continue;
-          const kept = text.slice(0, MAX_TOTAL - total);
-          total += kept.length;
-          const last = turns[turns.length - 1];
-          // One reply split across several nodes is still one turn.
-          if (last && last.role === item.role && item.role === "assistant") last.text = `${last.text}\n\n${kept}`;
-          else turns.push({ role: item.role, text: kept });
-        }
+          return { key: keys[index], role: item.role, el: item.el, text: textOf(body.length > 0 ? bodyOf(item.el, body) : [item.el]) };
+        });
+        const { turns, truncated } = assemble(messages);
         tried[strategy.name] = Math.max(tried[strategy.name] || 0, items.length);
         // Questions and replies both found: this is the page's layout. One that found only one side (a renamed
-        // reply element) is kept in case nothing better turns up, never preferred over one that found both.
+        // reply element) is kept in case nothing better turns up, never preferred over one that found both. Every
+        // strategy is tried until one looks whole, and the best wins (ties keep the earlier): on 2026-11-25 Claude
+        // left its user-message test id off some questions, so the first strategy found both sides yet lost a question.
         const both = turns.some((turn) => turn.role === "user") && turns.some((turn) => turn.role === "assistant");
-        if (turns.length > 0 && (!picked || (both && !picked.both) || (both === picked.both && turns.length > picked.turns.length))) {
-          picked = { strategy: strategy.name, items, turns, truncated: total >= MAX_TOTAL, both };
+        // Better: both sides found, then no message missing between two others, then more turns.
+        const whole = !gapped(messages);
+        const better = !picked || (both && !picked.both) || (both === picked.both && ((whole && !picked.whole) || (whole === picked.whole && turns.length > picked.turns.length)));
+        if (turns.length > 0 && better) {
+          picked = { strategy: strategy.name, items, messages, turns, truncated, both, whole };
         }
-        if (picked && picked.both) break;
+        // A pick that looks whole — both sides, starting with a question, no message missing between two others — ends the search.
+        if (picked && picked.both && picked.turns[0].role === "user" && !unanswered(picked.turns) && !gapped(picked.messages)) break;
       }
       if (picked) break;
     }
@@ -486,7 +611,10 @@ export async function readConversationFromPage(doc, href, waitMs = 3000) {
       // text Hubble could not read are a layout it no longer understands, never "no messages".
       const thread = provider === "chatgpt" && found === 0 && within('[data-thread-find-target="conversation"], [data-conversation-transcript]')[0];
       const notices = thread ? [...thread.querySelectorAll('[role="status"]')].map((status) => status.textContent || "") : [];
-      const empty = thread && !thread.querySelector("[data-turn-key], li") && !notices.reduce((text, notice) => text.replace(notice, ""), thread.textContent || "").trim();
+      // Claude says so itself (2026-11-25): a chat opened only for an artifact has an empty-conversation line and no rows.
+      const empty =
+        (thread && !thread.querySelector("[data-turn-key], li") && !notices.reduce((text, notice) => text.replace(notice, ""), thread.textContent || "").trim()) ||
+        (provider === "claude" && found === 0 && Boolean(page.querySelector('[data-testid="empty-conversation-line"]')));
       const loading = !empty && found === 0 && loadingNow();
       const diagnostics = {
         strategies: tried,
@@ -507,7 +635,7 @@ export async function readConversationFromPage(doc, href, waitMs = 3000) {
     // ChatGPT shows only the latest messages of a long chat and says so above them ("Loading older messages…").
     const firstMessage = picked.items[0] && picked.items[0].el;
     const thread = provider === "chatgpt" && firstMessage && firstMessage.closest('[data-thread-find-target="conversation"]');
-    const pending = thread && [...thread.querySelectorAll('[role="status"]')].some((status) => (status.textContent || "").trim() && status.compareDocumentPosition(firstMessage) & 4);
+    const pending = thread && [...thread.querySelectorAll('[role="status"]')].some((status) => (status.textContent || "").trim() && visible(status) && status.compareDocumentPosition(firstMessage) & 4);
     if (pending) read.olderNotLoaded = true;
     let partial = false;
     if (provider === "claude") {
@@ -520,24 +648,173 @@ export async function readConversationFromPage(doc, href, waitMs = 3000) {
       const entries = [...page.querySelectorAll("[data-workflow-entry]")].map((el) => Number(el.getAttribute("data-workflow-entry")) || 0);
       partial = (entries.length > 0 && Math.min(...entries) > 0) || turns[0].role === "assistant";
     }
+    // A message on the page whose text isn't drawn yet, or a question left without its reply, is part of the
+    // chat this read doesn't have: never left out without saying so.
+    const blank = picked.messages.filter((message) => !message.text).length;
+    if (blank > 0 || unanswered(turns) || gapped(picked.messages)) partial = true;
     if (partial) read.partial = true;
     if (responding) read.responding = true;
+    last = { messages: picked.messages, blank, first: firstMessage, pending: Boolean(pending) };
     return read;
   }
 
-  const deadline = Date.now() + Math.max(0, Number(waitMs) || 0);
-  for (;;) {
-    let read;
-    try {
-      read = readOnce();
-    } catch (err) {
-      // Chrome turns a thrown error into no result at all, which the popup could only call "Chrome didn't let
-      // Hubble read this page". Said as what it is instead, with the error (never the page's text) for the log.
-      return { ok: false, reason: "read-failed", provider, detail: `${(err && err.name) || "Error"}: ${(err && err.message) || ""}`.slice(0, 200) };
+  const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+  // Reads until the page has a readable chat, its reply finished and every message drawn — or until `until`. A
+  // message that stays blank while nothing else changes for a while is not going to be drawn: that read is taken.
+  // With `box`, only messages on screen in it count: ChatGPT draws a reply only once it scrolls into view, and one
+  // mounted below the screen is read on a later step.
+  const onScreen = (box, el) => {
+    const shown = box.getBoundingClientRect();
+    const rect = el.getBoundingClientRect();
+    return shown.height === 0 || rect.height === 0 || (rect.bottom > shown.top && rect.top < shown.bottom);
+  };
+  const settle = async (until, box) => {
+    let stableSince = Date.now();
+    let previous = "";
+    for (;;) {
+      last = null;
+      const read = readOnce();
+      const waiting = last ? last.messages.filter((message) => !message.text && (!box || onScreen(box, message.el))).length : 0;
+      if (read.ok && !read.responding && waiting === 0) return read;
+      const shape = last ? last.messages.map((message) => `${message.key}=${message.text.length}`).join(",") : "";
+      if (shape !== previous) stableSince = Date.now();
+      previous = shape;
+      if (read.ok && !read.responding && Date.now() - stableSince >= 1500) return read;
+      if (Date.now() >= until) return read;
+      await sleep(read.ok ? 150 : 250);
     }
-    // Read, and the app has finished writing: done. Otherwise read again until the wait is over.
-    if ((read.ok && !read.responding) || Date.now() >= deadline) return read;
-    await new Promise((resolve) => setTimeout(resolve, 250));
+  };
+
+  // The thread's scrolling box: the nearest ancestor of a message that scrolls, or the page itself.
+  const scrollerOf = (el) => {
+    const view = page.defaultView || (typeof window !== "undefined" ? window : undefined);
+    for (let node = el && el.parentElement; node; node = node.parentElement) {
+      if (node.scrollHeight > node.clientHeight + 4 && view && /(auto|scroll|overlay)/.test(view.getComputedStyle(node).overflowY || "")) return node;
+    }
+    const root = page.scrollingElement;
+    return root && view && root.scrollHeight > view.innerHeight + 4 ? root : undefined;
+  };
+
+  // Moves the box as a person's scrolling would: a wheel event first, then the position. ChatGPT (2026-11-25) snaps
+  // its thread back to the latest reply when it moves with no sign of the person scrolling — 10 snaps in 60 steps on
+  // a long chat, none with the wheel event. The event itself scrolls nothing.
+  const moveTo = (box, top) => {
+    try {
+      const view = page.defaultView || (typeof window !== "undefined" ? window : undefined);
+      const Wheel = view && (view.WheelEvent || view.Event);
+      if (Wheel) box.dispatchEvent(new Wheel("wheel", { deltaY: top - box.scrollTop, bubbles: true, cancelable: true }));
+    } catch {
+      // No wheel event here: the position is still set.
+    }
+    box.scrollTop = top;
+  };
+
+  // Scrolls `box` through the whole chat and collects every message by its key, in page order. Each pass's
+  // messages are placed after the last one already known before them, so order holds however the page windows.
+  const collect = async (box, first, until) => {
+    const order = [];
+    const byKey = new Map();
+    const take = () => {
+      let after = -1;
+      for (const message of last ? last.messages : []) {
+        const known = byKey.get(message.key);
+        if (known) {
+          if (message.text.length > known.text.length) known.text = message.text;
+          after = order.indexOf(message.key);
+        } else {
+          byKey.set(message.key, { ...message });
+          order.splice(after + 1, 0, message.key);
+          after += 1;
+        }
+      }
+    };
+    let read = first;
+    take();
+    // Up to its top, waiting for older messages to load: done when the box is at the top and stops growing.
+    const topBy = Date.now() + Math.max(1000, (until - Date.now()) * 0.4);
+    let height = -1;
+    let still = 0;
+    while (Date.now() < topBy && still < 2) {
+      moveTo(box, 0);
+      await sleep(400);
+      last = null;
+      read = readOnce();
+      take();
+      still = box.scrollTop <= 1 && box.scrollHeight === height && !(last && last.pending) ? still + 1 : 0;
+      height = box.scrollHeight;
+    }
+    const top = still >= 2;
+    // Down a screen at a time, letting each screen's messages draw. The app may move the box on its own — ChatGPT
+    // snapped a long thread to its end mid-way (2026-11-25), which once looked like reaching the bottom and lost the
+    // middle — so the walk keeps its own place, puts the box back when it was moved, and is at the end only when
+    // that place is. A screen read while the box was elsewhere is not taken.
+    let bottom = false;
+    let lost = false;
+    let at = box.scrollTop;
+    let moved = 0;
+    for (;;) {
+      read = await settle(Math.min(until, Date.now() + 2500), box);
+      if (Math.abs(box.scrollTop - at) > box.clientHeight / 2) {
+        if (moved < 5 && Date.now() < until) {
+          moved += 1;
+          moveTo(box, at);
+          await sleep(100);
+          continue;
+        }
+        // It won't stay: what lies between here and where it went may be missed.
+        lost = true;
+        at = box.scrollTop;
+      }
+      take();
+      // A small move is the browser keeping the screen's content still while turns above are measured (scroll
+      // anchoring): the next step starts from where the box really is, or a strip would be stepped over.
+      at = box.scrollTop;
+      bottom = at + box.clientHeight >= box.scrollHeight - 2;
+      if (bottom || Date.now() >= until) break;
+      const next = Math.min(box.scrollHeight - box.clientHeight, at + Math.max(80, Math.floor(box.clientHeight * 0.85)));
+      if (next <= at) {
+        bottom = true;
+        break;
+      }
+      at = next;
+      moved = 0;
+      moveTo(box, at);
+      await sleep(150);
+    }
+    return { read, messages: order.map((key) => byKey.get(key)), whole: top && bottom && !lost };
+  };
+
+  const deadline = Date.now() + Math.max(0, Number(waitMs) || 0);
+  try {
+    let read = await settle(deadline);
+    const limit = Math.max(0, Number(collectMs) || 0);
+    const box = read.ok && limit > 0 && last && last.messages.every((message) => message.key) ? scrollerOf(last.first) : undefined;
+    if (!box) return read;
+    // Put back by its distance from the end: older messages loaded above would move a plain offset.
+    const fromEnd = box.scrollHeight - box.scrollTop;
+    // Someone reading the latest reply is put back at the end, however much the chat's height changed meanwhile.
+    const atEnd = box.scrollTop + box.clientHeight >= box.scrollHeight - 4;
+    let pass;
+    try {
+      pass = await collect(box, read, Date.now() + limit);
+    } finally {
+      box.scrollTop = atEnd ? box.scrollHeight : Math.max(0, box.scrollHeight - fromEnd);
+    }
+    if (atEnd) {
+      await sleep(60);
+      box.scrollTop = box.scrollHeight;
+    }
+    const { turns, truncated } = assemble(pass.messages);
+    if (turns.length === 0) return read;
+    const whole = pass.whole && pass.messages.every((message) => message.text) && !unanswered(turns) && !gapped(pass.messages);
+    const collected = { ok: true, provider, url: address, title: read.ok ? read.title : String(page.title || "").trim().slice(0, 300), turns, truncated, strategy: read.ok ? read.strategy : "collected" };
+    if (!whole) collected.partial = true;
+    if (pass.read.responding || read.responding) collected.responding = true;
+    return collected;
+  } catch (err) {
+    // Chrome turns a thrown error into no result at all, which the popup could only call "Chrome didn't let
+    // Hubble read this page". Said as what it is instead, with the error (never the page's text) for the log.
+    return { ok: false, reason: "read-failed", provider, detail: `${(err && err.name) || "Error"}: ${(err && err.message) || ""}`.slice(0, 200) };
   }
 }
 

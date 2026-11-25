@@ -142,7 +142,7 @@ describe("Save to Hubble", () => {
     const answer = await ask({ type: MSG_CAPTURE_CONVERSATION, payload: { tabId: 7, workspaceId: "ws-history" } });
     expect(answer).toMatchObject({ ok: true, result: { outcome: "added", turns: 2 } });
     expect(chrome.scripting.executeScript).toHaveBeenCalledTimes(1);
-    expect(chrome.scripting.executeScript).toHaveBeenCalledWith({ target: { tabId: 7 }, func: expect.objectContaining({ name: readConversationFromPage.name }), args: [null, null, 8000] });
+    expect(chrome.scripting.executeScript).toHaveBeenCalledWith({ target: { tabId: 7 }, func: expect.objectContaining({ name: readConversationFromPage.name }), args: [null, null, 8000, 60000] });
     expect(pageRequests).toEqual([
       expect.objectContaining({ tabId: 42, kind: "capture", args: { workspaceId: "ws-history", captureId: expect.any(String), capture: { url: CHAT_URL, title: "Thesis feedback - Claude", turns: expect.any(Array) } } }),
     ]);
