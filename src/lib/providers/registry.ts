@@ -123,6 +123,8 @@ const INSERT_NOTE =
 const ATTACH_NOTE =
   "Use in AI can attach an uploaded file's original to the message, the way choosing it from the app's attach button would, and checks the app shows it. If the app doesn't take it, Hubble says so and puts the file's text in instead — never claiming the original was attached.";
 const LIVE_SIGNED_OUT = "Driven by Hubble's QA on the live site, signed out, in Chrome, 2026-10-19:";
+// The page reader Save runs, run by Hubble's QA in the person's own signed-in Chrome (counts and roles checked, no text kept).
+const LIVE_SIGNED_IN_READER = "Its page reader was run by Hubble's QA in a signed-in Chrome on the live site, 2026-11-25,";
 const SUBMIT_NOTE =
   "Off unless you choose Send automatically for that transfer. Hubble presses the app's own send button once the message (and any file) is ready, and reports sent only when the message box has emptied.";
 
@@ -144,7 +146,7 @@ export const AI_PROVIDERS: Readonly<Record<AiProviderId, AiProvider>> = {
     ],
     exportFile: "conversations.json from ChatGPT's data export (Settings → Data controls → Export data)",
     capabilities: {
-      pageCapture: { supported: true, verified: "fixture", note: CAPTURE_NOTE },
+      pageCapture: { supported: true, verified: "fixture", note: CAPTURE_NOTE, liveCheck: `${LIVE_SIGNED_IN_READER} on 9 of the person's own chats. It found and fixed replies being dropped (an inline chip carried the old reply marker) and long chats saved as only the few turns ChatGPT keeps on the page. On a 52-question chat it now scrolls through and keeps 50 questions in order with their replies, each once, and says the save is only part of the chat — not yet every turn.` },
       exportImport: {
         supported: true,
         verified: "fixture",
@@ -175,7 +177,7 @@ export const AI_PROVIDERS: Readonly<Record<AiProviderId, AiProvider>> = {
     ],
     exportFile: "conversations.json from Claude's data export (Settings → Privacy → Export data)",
     capabilities: {
-      pageCapture: { supported: true, verified: "fixture", note: CAPTURE_NOTE },
+      pageCapture: { supported: true, verified: "fixture", note: CAPTURE_NOTE, liveCheck: `${LIVE_SIGNED_IN_READER} on 7 of the person's own chats: every turn read, including questions without their test id and file-only questions (kept as the file's name), a chat that keeps only some rows on the page read whole by scrolling, and an empty chat reported as empty.` },
       exportImport: {
         supported: true,
         verified: "fixture",

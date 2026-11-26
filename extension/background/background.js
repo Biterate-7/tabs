@@ -1035,11 +1035,13 @@ async function captureConversation({ tabId, workspaceId, expectedKey }) {
 
 // How long Save lets the page finish rendering, or finish writing a reply, before it says why it couldn't read it.
 const CAPTURE_READ_WAIT_MS = 8000;
+// How long Save may scroll a long chat through, collecting the messages the app keeps off the page (ai-pages.js).
+const CAPTURE_COLLECT_MS = 60000;
 
 async function captureIdentified(tabId, tab, identity, workspaceId, { viaDesktop = true, owner } = {}) {
   let read;
   try {
-    const [injection] = await chrome.scripting.executeScript({ target: { tabId }, func: readConversationFromPage, args: [null, null, CAPTURE_READ_WAIT_MS] });
+    const [injection] = await chrome.scripting.executeScript({ target: { tabId }, func: readConversationFromPage, args: [null, null, CAPTURE_READ_WAIT_MS, CAPTURE_COLLECT_MS] });
     read = injection?.result;
   } catch (err) {
     log("capture-read-failed", { provider: identity.provider, detail: errorMessage(err) });
